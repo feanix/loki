@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+/dist/
+/build/out/
+*.spec.bak
+/src/loki/_paa.pyd
+/src/loki/_paa.pyd.new
+/native/**/target/

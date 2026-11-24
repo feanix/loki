@@ -1,0 +1,9 @@
+# c2: drop mixed files: PNGs from two folders, a .txt and a folder (ignored), then a re-drop in another case.
+# Rows are added with their status; nothing is written to disk (ls before and after the waits).
+drop demo_data/textures/stone_co.png demo_data/weapons/rifle_co.png demo_data/notes.txt demo_data/weapons
+dump
+ls demo_data/textures
+drop demo_data/textures/STONE_CO.PNG demo_data/textures/grass_co.png demo_data/weapons/odd_co.png demo_data/weapons/broken_co.png demo_data/textures/ghost.png
+wait 0.6
+dump
+ls demo_data/textures

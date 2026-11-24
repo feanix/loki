@@ -1,0 +1,10 @@
+# c5: remove takes a row off the list; the png and paa stay on disk and the removed file is no longer watched.
+drop demo_data/textures/grass_co.png demo_data/textures/rock_co.png
+toggle demo_data/textures/grass_co.png
+convertall
+ls demo_data/textures
+remove demo_data/textures/grass_co.png
+dump
+touch demo_data/textures/grass_co.png
+wait 1
+ls demo_data/textures

@@ -1,0 +1,11 @@
+# c6: list, caps and bake survive a restart; a listed file that is gone shows as missing and recovers when it returns.
+drop demo_data/textures/grass_co.png demo_data/textures/rock_co.png demo_data/weapons/rifle_co.png
+maxsize demo_data/textures/rock_co.png 256
+toggle demo_data/textures/grass_co.png
+dump
+move demo_data/textures/rock_co.png demo_data/away/rock_co.png
+restart
+dump
+move demo_data/away/rock_co.png demo_data/textures/rock_co.png
+wait 1
+dump

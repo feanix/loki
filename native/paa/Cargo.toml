@@ -1,0 +1,37 @@
+[package]
+name = "loki-paa"
+version = "0.1.0"
+edition = "2021"
+license-file = "../../LICENSE"
+authors = ["Astrid Winters"]
+description = "PAA (DXT1/DXT5) texture encoder for Loki: Rust lib, Python extension _paa, and the paa-proto CLI"
+# Copyright (c) 2026 Astrid Winters
+
+[lib]
+name = "loki_paa"
+# cdylib is the Python extension (build with --features python); rlib lets paa-proto link the lib.
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "paa-proto"
+path = "src/main.rs"
+
+[features]
+# The Python glue (module `_paa`). Off by default so the CLI links no Python.
+python = ["dep:pyo3"]
+
+[dependencies]
+png = "0.17"
+lzokay-native = "0.2"
+pyo3 = { version = "0.30", optional = true, features = ["abi3-py312", "extension-module"] }
+
+[profile.release]
+opt-level = 3
+debug = false
+lto = true
+codegen-units = 1
+# panic stays "unwind": the Python entry catches a panic and raises an exception (an
+# abort would kill Loki). Do not set panic = "abort" here.
+
+# standalone crate: not part of any parent workspace
+[workspace]

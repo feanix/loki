@@ -1,0 +1,235 @@
+"""The command line (#018): inputs, routing, output lines, exit codes and the held-.paa wait (criterion 8).
+
+Runs loki.cli.main in-process with the real Loki encoder; ImageToPAA is never needed (find_imagetopaa is
+patched to "absent"), and a real CreateFileW hold stands in for TexView or an exporter.
+"""
+
+import re
+import threading
+import time
+from pathlib import Path
+
+import pytest
+from PIL import Image
+
+from lockhelp import Lock, windows_only
+from loki import __main__ as loki_main
+from loki import cli, core, settings
+
+
+@pytest.fixture(autouse=True)
+def no_tool(monkeypatch):
+    def absent(override=None, steam_roots=None):
+        if override:
+            if Path(override).is_file():
+                return Path(override)
+            raise core.ToolNotFound(f"ImageToPAA not found at the configured path: {override}")
+        raise core.ToolNotFound("absent")
+
+    monkeypatch.setattr(core, "find_imagetopaa", absent)
+    monkeypatch.setattr(core, "_REPLACE_PAUSE", 0.001)
+    monkeypatch.setattr(cli, "RETRY_PASS", 0.05)
+
+
+def png(path: Path, size=(64, 64)) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Image.effect_noise(size, 60).convert("RGB").save(path)
+    return path
+
+
+def run(capsys, *argv) -> tuple[int, str, str]:
+    code = cli.main(list(argv))
+    cap = capsys.readouterr()
+    return code, cap.out, cap.err
+
+
+def test_help_and_version_exit_0(capsys):
+    code, out, _ = run(capsys, "--help")
+    assert code == 0 and "convert" in out
+    code, out, _ = run(capsys, "convert", "--help")
+    assert code == 0
+    for opt in ("--max-size", "--imagetopaa", "--jobs", "--skip-up-to-date", "--recursive", "--wait-locked", "--quiet"):
+        assert opt in out
+    assert "--converter" not in out
+    code, out, _ = run(capsys, "--version")
+    assert code == 0 and out.startswith("Loki ")
+
+
+def test_file_glob_folder_and_recursive_inputs(tmp_path, capsys):
+    a = png(tmp_path / "one" / "a_co.png")
+    png(tmp_path / "one" / "sub" / "b_co.png")
+    png(tmp_path / "two" / "c_co.png")
+    code, out, _ = run(capsys, "convert", str(a))
+    assert code == 0 and out.count("converted ") == 1 and (tmp_path / "one" / "a_co.paa").is_file()
+    code, out, _ = run(capsys, "convert", str(tmp_path / "two" / "*_co.png"))
+    assert code == 0 and (tmp_path / "two" / "c_co.paa").is_file()
+    code, out, _ = run(capsys, "convert", str(tmp_path / "one"))
+    assert code == 0 and not (tmp_path / "one" / "sub" / "b_co.paa").exists()
+    code, out, _ = run(capsys, "convert", str(tmp_path / "one"), "--recursive")
+    assert code == 0 and (tmp_path / "one" / "sub" / "b_co.paa").is_file()
+    assert out.rstrip().splitlines()[-1].startswith("done: 2 converted, 0 skipped, 0 flagged, 0 need Arma 3 Tools, 0 errors")
+
+
+def test_line_format_and_converter_named(tmp_path, capsys):
+    p = png(tmp_path / "wall_co.png", (512, 512))
+    code, out, _ = run(capsys, "convert", str(p), "--max-size", "256")
+    line = out.splitlines()[0]
+    assert code == 0 and line.startswith("converted  ") and "wall_co.png -> wall_co.paa (256x256, loki, " in line
+    assert line.endswith(" s)")
+    assert core.paa_size(tmp_path / "wall_co.paa") == (256, 256)
+
+
+def test_flagged_needs_tool_and_error_lines_exit_1(tmp_path, capsys):
+    odd = png(tmp_path / "odd_co.png", (300, 200))
+    cat = png(tmp_path / "rock_cat.png")
+    code, out, _ = run(capsys, "convert", str(odd), str(cat), str(tmp_path / "gone.png"))
+    assert code == 1
+    assert "flagged    " in out and "odd_co.png: 300x200: sides must be powers of two" in out
+    assert "needs-tool " in out and "rock_cat.png: needs Arma 3 Tools for _cat" in out
+    assert "error      " in out and "gone.png: file not found" in out
+    assert out.splitlines()[-1].startswith("done: 0 converted, 0 skipped, 1 flagged, 1 need Arma 3 Tools, 1 errors")
+    assert not (tmp_path / "odd_co.paa").exists() and not (tmp_path / "rock_cat.paa").exists()
+
+
+def test_skip_up_to_date_and_quiet(tmp_path, capsys):
+    p = png(tmp_path / "a_co.png")
+    assert run(capsys, "convert", str(p))[0] == 0
+    code, out, _ = run(capsys, "convert", str(p), "--skip-up-to-date")
+    assert code == 0 and out.startswith("skipped    ") and "0 converted, 1 skipped" in out
+    code, out, _ = run(capsys, "convert", str(p), "--quiet")  # converts again without --skip-up-to-date
+    assert code == 0 and out.count("\n") == 1 and out.startswith("done: 1 converted")
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [["convert"], ["convert", "--max-size", "999", "x.png"], ["convert", "--bogus", "x.png"], ["convert", "--jobs", "0", "x.png"],
+     ["convert", "--converter", "loki", "x.png"], ["convert", "--wait-locked", "-1", "x.png"], ["nothing"], []],
+)
+def test_usage_errors_exit_2(argv, capsys):
+    code, _out, err = run(capsys, *argv)
+    assert code == 2 and err
+
+
+def test_no_png_matched_exits_2(tmp_path, capsys):
+    code, _out, err = run(capsys, "convert", str(tmp_path / "*.png"))
+    assert code == 2 and "no PNG" in err
+    code, _out, err = run(capsys, "convert", str(tmp_path))
+    assert code == 2
+
+
+def test_converter_option_is_gone(tmp_path, capsys):
+    p = png(tmp_path / "a_co.png")
+    code, _out, err = run(capsys, "convert", str(p), "--converter", "loki")
+    assert code == 2 and "unrecognized arguments" in err and "--converter" in err
+    assert not (tmp_path / "a_co.paa").exists()
+
+
+def test_bad_imagetopaa_path_is_a_usage_error(tmp_path, capsys):
+    p = png(tmp_path / "a_co.png")
+    code, _out, err = run(capsys, "convert", str(p), "--imagetopaa", str(tmp_path / "nope.exe"))
+    assert code == 2 and "not found" in err
+    assert not (tmp_path / "a_co.paa").exists()
+
+
+def test_imagetopaa_option_path_is_used_for_a_handover_file(tmp_path, capsys, monkeypatch):
+    p = png(tmp_path / "rock_sky.png")
+    fake = tmp_path / "ImageToPAA.exe"
+    fake.write_bytes(b"")
+    called = []
+
+    def tool(exe, src, dst):
+        called.append(Path(exe))
+        Path(dst).write_bytes(b"paa from the tool")
+
+    monkeypatch.setattr(core, "_run_tool", tool)
+    code, out, _ = run(capsys, "convert", str(p), "--imagetopaa", str(fake))
+    assert code == 0 and called == [fake] and "bohemia" in out.splitlines()[0]
+
+
+def test_help_handover_suffixes_are_ones_the_encoder_rejects(capsys):
+    from loki import _paa
+
+    _code, out, _ = run(capsys, "convert", "--help")
+    text = " ".join(out.split())
+    assert "soft alpha" in text.lower() and "ImageToPAA" in text
+    named = re.findall(r"(?<![\w])(_[a-z]+)\b", cli.HANDOVER_CASES)
+    assert {"_sky", "_cat", "_can", "_non"} <= set(named)
+    for s in named:
+        assert not _paa.supported(f"x{s}.png"), s
+    assert not _paa.supported("x_zzz.png")
+
+
+def test_handover_to_imagetopaa_when_the_tool_is_present(tmp_path, capsys, monkeypatch):
+    p = png(tmp_path / "rock_sky.png")
+    fake = tmp_path / "ImageToPAA.exe"
+    fake.write_bytes(b"")
+    called = []
+
+    def tool(exe, src, dst):
+        called.append(Path(exe))
+        Path(dst).write_bytes(b"paa from the tool")
+
+    monkeypatch.setattr(core, "find_imagetopaa", lambda override=None, steam_roots=None: fake)
+    monkeypatch.setattr(core, "_run_tool", tool)
+    code, out, _ = run(capsys, "convert", str(p))
+    assert code == 0 and called == [fake] and out.startswith("converted  ") and "bohemia" in out.splitlines()[0]
+    assert (tmp_path / "rock_sky.paa").read_bytes() == b"paa from the tool"
+
+
+def test_handover_without_the_tool_says_needs_arma_3_tools(tmp_path, capsys):
+    p = png(tmp_path / "rock_sky.png")
+    code, out, err = run(capsys, "convert", str(p))
+    assert code == 1 and "needs-tool " in out and "rock_sky.png: needs Arma 3 Tools for _sky" in out
+    assert "manually" not in out + err and not (tmp_path / "rock_sky.paa").exists()
+
+
+def test_does_not_touch_gui_settings(tmp_path, capsys, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    p = png(tmp_path / "a_co.png")
+    assert run(capsys, "convert", str(p))[0] == 0
+    assert not (tmp_path / "appdata").exists() and not settings.default_path().exists()
+
+
+def test_windowed_exe_convert_prints_pointer_and_exits_2(capsys):
+    assert loki_main.main(["convert", "x.png"]) == 2
+    err = capsys.readouterr().err
+    assert "Loki-cli.exe convert" in err
+
+
+# --- criterion 8: the output .paa is held open by another program ---
+
+def held_setup(tmp_path):
+    p = png(tmp_path / "a_co.png")
+    paa = p.with_suffix(".paa")
+    paa.write_bytes(b"old paa bytes")
+    time.sleep(0.02)
+    p.write_bytes(p.read_bytes())  # png newer than the old paa
+    return p, paa
+
+
+@windows_only
+def test_held_paa_released_inside_the_limit_converts(tmp_path, capsys):
+    p, paa = held_setup(tmp_path)
+    lock = Lock(paa, share=1)  # FILE_SHARE_READ: replace and delete fail, like TexView
+    threading.Timer(0.6, lock.release).start()
+    code, out, _ = run(capsys, "convert", str(p), "--wait-locked", "10")
+    assert code == 0 and out.startswith("converted  ")
+    assert core.paa_size(paa) == (64, 64)
+
+
+@windows_only
+def test_held_paa_past_the_limit_errors_paa_in_use_and_keeps_old_paa(tmp_path, capsys):
+    p, paa = held_setup(tmp_path)
+    with Lock(paa, share=1):
+        code, out, _ = run(capsys, "convert", str(p), "--wait-locked", "0.5")
+    assert code == 1 and "error      " in out and "a_co.png: PAA in use" in out
+    assert paa.read_bytes() == b"old paa bytes"
+    assert [x for x in tmp_path.iterdir() if x.name.startswith(".loki-tmp-")] == []
+
+
+def test_non_lock_failure_errors_at_once(tmp_path, capsys, monkeypatch):
+    p = png(tmp_path / "a_co.png")
+    monkeypatch.setattr(core, "_run_loki", lambda *a: "Loki converter: boom")
+    t0 = time.monotonic()
+    code, out, _ = run(capsys, "convert", str(p), "--wait-locked", "30")
+    assert code == 1 and "a_co.png: Loki converter: boom" in out and time.monotonic() - t0 < 5

@@ -1,0 +1,12 @@
+# c4: bake on one row only; saving it converts it at its cap. The other listed file and a file not on the list are saved too and stay untouched.
+drop demo_data/textures/grass_co.png demo_data/textures/rock_co.png
+maxsize demo_data/textures/rock_co.png 256
+toggle demo_data/textures/rock_co.png
+dump
+touch demo_data/textures/rock_co.png
+touch demo_data/textures/grass_co.png
+touch demo_data/textures/stone_co.png
+wait 1.5
+dump
+paainfo demo_data/textures/rock_co.png
+ls demo_data/textures

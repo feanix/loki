@@ -1,0 +1,13 @@
+# Demo: drop files from two folders, per-row caps, toggles, all on/off, convert all, restart.
+drop demo_data/textures/stone_co.png demo_data/textures/grass_co.png demo_data/textures/old_co.png demo_data/weapons/rifle_co.png demo_data/weapons/odd_co.png demo_data/weapons/broken_co.png demo_data/notes.txt
+dump
+maxsize demo_data/textures/grass_co.png 256
+toggle demo_data/textures/stone_co.png
+allon
+alloff
+toggle demo_data/weapons/rifle_co.png
+dump
+convertall
+dump
+restart
+dump

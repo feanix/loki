@@ -1,0 +1,8 @@
+# Screenshot fixture: six rows, mixed caps, mixed statuses (the exe takes this through --settings).
+drop demo_data/textures/grass_co.png demo_data/textures/rock_co.png demo_data/textures/stone_co.png demo_data/textures/old_co.png demo_data/weapons/rifle_co.png demo_data/weapons/odd_co.png
+toggle demo_data/textures/grass_co.png demo_data/weapons/rifle_co.png
+convertall
+maxsize demo_data/textures/rock_co.png 256
+maxsize demo_data/textures/stone_co.png 512
+maxsize demo_data/weapons/rifle_co.png 1024
+dump

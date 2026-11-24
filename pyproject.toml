@@ -1,0 +1,20 @@
+[project]
+name = "loki"
+version = "0.3.0"
+description = "Drop PNG textures in and get Arma 3 PAA files, rebuilt on every save."
+license = "LicenseRef-MIT-Commons-Clause"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES"]
+authors = [{ name = "Astrid Winters" }]
+requires-python = ">=3.12"
+dependencies = ["pillow"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+# fd-level capture makes Tk init intermittently fail ("Can't find a usable init.tcl"): see tests/conftest.py
+addopts = "--capture=sys"
+markers = ["e2e: needs the real ImageToPAA.exe; skipped when absent"]
+
+[tool.ruff]
+line-length = 110
+src = ["src", "tests"]

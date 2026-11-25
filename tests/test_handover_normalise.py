@@ -182,7 +182,8 @@ def psnr_and_alpha_shift(got, ideal) -> tuple[float, float]:
 @needs_tool
 @pytest.mark.parametrize(("name", "suffix", "build", "hands_over"), CASES, ids=lambda v: v if isinstance(v, str) else "")
 def test_imagetopaa_gets_8bit_rgb_and_the_paa_matches_the_ideal(tmp_path, paa_proto, name, suffix, build, hands_over, capsys):
-    """Real ImageToPAA: a PAA is written and decodes to within 35 dB and 2 alpha levels of the ideal pixels."""
+    """A PAA is written and decodes to within 35 dB and 2 alpha levels of the ideal pixels: by real ImageToPAA with the
+    Bohemia converter, and (`hands_over`: the cases Loki handed over before #31) by Loki's own encoder."""
     for converter in (core.BOHEMIA, core.LOKI) if hands_over else (core.BOHEMIA,):
         png = tmp_path / converter / f"{name}{suffix}.png"
         png.parent.mkdir()
@@ -190,7 +191,7 @@ def test_imagetopaa_gets_8bit_rgb_and_the_paa_matches_the_ideal(tmp_path, paa_pr
         before = png.read_bytes()
         res = core.convert(png, TOOL, None, converter)
         assert res.ok, res.error
-        assert res.converter == core.BOHEMIA
+        assert res.converter == converter  # #31: no alpha file is handed over, the Loki converter encodes it itself
         assert png.read_bytes() == before  # the source is never modified
         got = decode(paa_proto, png.with_suffix(".paa"), png.parent / "back.png")
         psnr, shift = psnr_and_alpha_shift(got, dxt1_ideal(ideal) if suffix == "_co" else ideal)
@@ -267,3 +268,16 @@ def test_incompressible_4096_dxt5_has_its_own_message_and_no_handover(tmp_path, 
     assert not png.with_suffix(".paa").exists()
     res = core.convert(png, None, 2048, core.LOKI)  # the advice works
     assert res.ok, res.error
+
+
+def test_incompressible_8192_dxt5_is_halved_and_then_has_the_mip_too_large_message(tmp_path, monkeypatch):
+    """#55: the 4096 DXT5 overflow message still applies after an 8192 PNG is halved to 4096 (256 MiB noise PNG)."""
+    png = tmp_path / "noise_nohq.png"
+    Image.frombytes("RGBA", (8192, 8192), os.urandom(8192 * 8192 * 4)).save(png, compress_level=0)
+    called = []
+    monkeypatch.setattr(core, "_run_tool", lambda *a: called.append(a))
+    res = core.convert(png, Path("ImageToPAA.exe"), None, core.LOKI)
+    assert not res.ok and res.error == core.MIP_TOO_LARGE and called == []
+    res = core.convert(png, None, 2048, core.LOKI)  # the advice works: max size applies on top of the halving
+    assert res.ok, res.error
+    assert core.paa_size(png.with_suffix(".paa")) == (2048, 2048)

@@ -83,7 +83,7 @@ def test_non_pow2_flagged_with_reason(tmp_path):
     (tmp_path / "odd.paa").write_bytes(b"x")  # flagged wins over a fresh paa
     got = check_all(tmp_path)
     assert got["odd.png"].status == "flagged"
-    assert got["odd.png"].reason == "1000x700: sides must be powers of two (e.g. 1024x512)"
+    assert got["odd.png"].reason == "1000x700: sides must be powers of two (e.g. 1024x512) or set an output size"
     assert got["odd.png"].size == (1000, 700)
     assert got["ok.png"].status == "needs_converting"
 
@@ -339,3 +339,22 @@ def test_paa_size_random_garbage_is_a_tuple_or_none(tmp_path):
     p.write_bytes(bytes(range(256)) * 40)  # any value is fine: a wrong size just reads as stale
     got = core.paa_size(p)
     assert got is None or (len(got) == 2 and all(0 < v <= 0x7FFF for v in got))
+
+
+def test_load_limit_advice_matches_the_rust_message():
+    """The Pillow bomb row and the Rust loader refusal give the same advice (one wording, #55)."""
+    src = (Path(__file__).parent.parent / "native" / "paa" / "src" / "img.rs").read_text(encoding="utf-8")
+    tail = core.LOAD_LIMIT_ADVICE.removeprefix("too big to load ")
+    assert "is too big to load " + tail.replace("16384", "{MAX_LOAD_SIDE}") in src
+
+
+def test_check_png_bomb_row_gives_the_advice(tmp_path, monkeypatch):
+    p = tmp_path / "a_co.png"
+    Image.new("RGB", (4, 4)).save(p)
+
+    def boom(*a, **k):
+        raise Image.DecompressionBombError("too many pixels")
+
+    monkeypatch.setattr(core.Image, "open", boom)
+    e = core.check_png(p)
+    assert e.reason == "cannot read: " + core.LOAD_LIMIT_ADVICE

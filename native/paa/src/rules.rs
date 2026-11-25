@@ -129,6 +129,7 @@ impl Src {
 }
 
 /// The cfg `mipmapFilter` values the classes use. An unset filter is `Default` (plain box).
+/// Variant names are the cfg spellings, so `{:?}` prints the TexConvert.cfg value.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Filter {
     /// Fade every channel toward 128 as the mip gets small (detail textures).
@@ -145,21 +146,6 @@ pub enum Filter {
     NormalizeNormalMapNoise,
     /// `NormalizeNormalMap`, then the xy part fades toward the flat normal on small mips.
     NormalizeNormalMapFade,
-}
-
-impl Filter {
-    /// The spelling used in TexConvert.cfg.
-    pub fn cfg(self) -> &'static str {
-        match self {
-            Filter::FadeOut => "FadeOut",
-            Filter::AlphaNoise => "AlphaNoise",
-            Filter::AddAlphaNoise => "AddAlphaNoise",
-            Filter::NormalizeNormalMap => "NormalizeNormalMap",
-            Filter::NormalizeNormalMapAlpha => "NormalizeNormalMapAlpha",
-            Filter::NormalizeNormalMapNoise => "NormalizeNormalMapNoise",
-            Filter::NormalizeNormalMapFade => "NormalizeNormalMapFade",
-        }
-    }
 }
 
 /// One TextureHints class with its inherited keys already resolved.
@@ -197,7 +183,10 @@ pub struct Rule {
 impl Rule {
     /// The suffix without underscore and wildcards, e.g. `"nohq"` (empty for `PLAIN`).
     pub fn suffix(&self) -> &'static str {
-        self.pattern.strip_prefix("*_").and_then(|s| s.strip_suffix(".*")).unwrap_or("")
+        self.pattern
+            .strip_prefix("*_")
+            .and_then(|s| s.strip_suffix(".*"))
+            .unwrap_or("")
     }
 
     /// True when any `channelSwizzle*` key is set (ImageToPAA then writes a SWIZ tag).
@@ -213,6 +202,42 @@ impl Rule {
                 Some("needs ImageToPAA: its mipmapFilter writes noise this encoder does not reproduce")
             }
             _ => None,
+        }
+    }
+
+    /// The default pad colour (RGBA, source space, before any swizzle) for an output size that leaves
+    /// canvas to fill (0.3.1, decision 51). The one place that says it:
+    /// * normal maps (a normal-map mip filter): `128,128,255,255`, the flat normal;
+    /// * ambient shadow (`_as`, `_ads`, `_adshq`): `255,255,255,255`, no shadow;
+    /// * classes that keep alpha (a format with an alpha channel and the source alpha stored as alpha:
+    ///   `_ca`, `_lca`, `_cat`, `_can`, `_8888`, `_mc`, `_pr`, `_gs`, `_raw` and the like): `0,0,0,0`;
+    /// * everything else (including unsuffixed files): `0,0,0,255`.
+    pub fn pad_colour(&self) -> [u8; 4] {
+        let normal = matches!(
+            self.mip_filter,
+            Some(
+                Filter::NormalizeNormalMap
+                    | Filter::NormalizeNormalMapAlpha
+                    | Filter::NormalizeNormalMapNoise
+                    | Filter::NormalizeNormalMapFade
+            )
+        );
+        let ambient = matches!(
+            self.class,
+            "ambient_shadow" | "ambient_diffuse_shadow" | "ambient_diffuse_shadow_hq"
+        );
+        let keeps_alpha = matches!(
+            self.format,
+            Some(Fmt::Dxt5 | Fmt::Argb1555 | Fmt::Argb4444 | Fmt::Ai88)
+        ) && matches!(self.swizzle[3], None | Some(Src::A));
+        if normal {
+            [128, 128, 255, 255]
+        } else if ambient {
+            [255, 255, 255, 255]
+        } else if keeps_alpha {
+            [0, 0, 0, 0]
+        } else {
+            [0, 0, 0, 255]
         }
     }
 
@@ -242,7 +267,12 @@ pub const PLAIN: Rule = Rule {
 
 /// Starting point for every table entry: all keys unset and not verified. Each rule overrides
 /// only what its cfg class sets.
-const BASE: Rule = Rule { class: "", verified: false, linear_mips: false, ..PLAIN };
+const BASE: Rule = Rule {
+    class: "",
+    verified: false,
+    linear_mips: false,
+    ..PLAIN
+};
 use Filter as F;
 use Fmt::*;
 use Src::{InvA, InvG, InvR, One, Zero, A, B, G, R};
@@ -251,12 +281,44 @@ use Src::{InvA, InvG, InvR, One, Zero, A, B, G, R};
 pub const RULES: &[Rule] = &[
     // ImageToPAA writes `_8888` files as ARGB1555, not 32-bit ARGB (observed), so the format
     // below is intentionally `Argb1555`.
-    Rule { class: "TexRGBA8888", pattern: "*_8888.*", format: Some(Argb1555), dyn_range: Some(1), linear_mips: true, verified: true, ..BASE },
-    Rule { class: "ColorMap", pattern: "*_co.*", format: Some(Dxt1), dyn_range: Some(1), verified: true, linear_mips: true, ..BASE },
-    Rule { class: "ColorMapRaw", pattern: "*_raw.*", format: Some(Argb1555), dyn_range: Some(0), verified: true, ..BASE },
-    Rule { class: "ColorAlphaMap", pattern: "*_ca.*", format: Some(Dxt5), dyn_range: Some(1), verified: true, linear_mips: true, ..BASE },
+    Rule {
+        class: "TexRGBA8888",
+        pattern: "*_8888.*",
+        format: Some(Argb1555),
+        dyn_range: Some(1),
+        linear_mips: true,
+        verified: true,
+        ..BASE
+    },
+    Rule {
+        class: "ColorMap",
+        pattern: "*_co.*",
+        format: Some(Dxt1),
+        dyn_range: Some(1),
+        verified: true,
+        linear_mips: true,
+        ..BASE
+    },
+    Rule {
+        class: "ColorMapRaw",
+        pattern: "*_raw.*",
+        format: Some(Argb1555),
+        dyn_range: Some(0),
+        verified: true,
+        ..BASE
+    },
+    Rule {
+        class: "ColorAlphaMap",
+        pattern: "*_ca.*",
+        format: Some(Dxt5),
+        dyn_range: Some(1),
+        verified: true,
+        linear_mips: true,
+        ..BASE
+    },
     // Rules without `verified: true` are not routed here: `_cat`, `_non` and `_can` use noise
-    // filters we cannot reproduce; `_sky` failed the mip 2 comparison against ImageToPAA.
+    // filters we cannot reproduce. (`_sky` failed the old absolute mip 2 floor; under the relative check
+    // of #49 it passes, #31.)
     Rule {
         class: "ColorAlphaTest",
         pattern: "*_cat.*",
@@ -271,6 +333,7 @@ pub const RULES: &[Rule] = &[
         format: Some(Dxt5),
         swizzle: [Some(R), Some(InvA), Some(B), Some(InvG)],
         dyn_range: Some(0),
+        verified: true,
         ..BASE
     },
     Rule {
@@ -281,7 +344,8 @@ pub const RULES: &[Rule] = &[
         swizzle: [Some(A), Some(A), Some(A), Some(One)],
         dyn_range: Some(0),
         mip_filter: Some(F::FadeOut),
-        verified: true, ..BASE
+        verified: true,
+        ..BASE
     },
     Rule {
         class: "color_detail",
@@ -290,7 +354,8 @@ pub const RULES: &[Rule] = &[
         enable_dxt: Some(1),
         dyn_range: Some(0),
         mip_filter: Some(F::FadeOut),
-        verified: true, ..BASE
+        verified: true,
+        ..BASE
     },
     Rule {
         class: "layer_color",
@@ -299,7 +364,8 @@ pub const RULES: &[Rule] = &[
         enable_dxt: Some(1),
         dyn_range: Some(0),
         autoreduce: Some(1),
-        verified: true, ..BASE
+        verified: true,
+        ..BASE
     },
     Rule {
         class: "multiply_color",
@@ -308,16 +374,25 @@ pub const RULES: &[Rule] = &[
         enable_dxt: Some(1),
         dyn_range: Some(0),
         autoreduce: Some(1),
-        verified: true, ..BASE
+        verified: true,
+        ..BASE
     },
-    Rule { class: "layer_color_draft", pattern: "*_draftlco.*", enable_dxt: Some(0), dyn_range: Some(0), verified: true, ..BASE },
+    Rule {
+        class: "layer_color_draft",
+        pattern: "*_draftlco.*",
+        enable_dxt: Some(0),
+        dyn_range: Some(0),
+        verified: true,
+        ..BASE
+    },
     Rule {
         class: "layer_color_alpha",
         pattern: "*_lca.*",
         format: Some(Dxt5),
         enable_dxt: Some(1),
         dyn_range: Some(0),
-        verified: true, ..BASE
+        verified: true,
+        ..BASE
     },
     Rule {
         class: "mask",
@@ -326,7 +401,8 @@ pub const RULES: &[Rule] = &[
         enable_dxt: Some(1),
         dyn_range: Some(0),
         autoreduce: Some(1),
-        verified: true, ..BASE
+        verified: true,
+        ..BASE
     },
     Rule {
         class: "prt",
@@ -335,7 +411,8 @@ pub const RULES: &[Rule] = &[
         enable_dxt: Some(1),
         dyn_range: Some(0),
         autoreduce: Some(1),
-        verified: true, ..BASE
+        verified: true,
+        ..BASE
     },
     Rule {
         class: "ambient_diffuse_shadow",
@@ -345,7 +422,8 @@ pub const RULES: &[Rule] = &[
         swizzle: [Some(One), Some(G), Some(B), Some(One)],
         dyn_range: Some(0),
         error_metrics: Some("Distance"),
-        verified: true, ..BASE
+        verified: true,
+        ..BASE
     },
     Rule {
         class: "ambient_diffuse_shadow_hq",
@@ -354,7 +432,8 @@ pub const RULES: &[Rule] = &[
         swizzle: [Some(Zero), Some(B), Some(Zero), Some(G)],
         dyn_range: Some(0),
         error_metrics: Some("Distance"),
-        verified: true, ..BASE
+        verified: true,
+        ..BASE
     },
     Rule {
         class: "detail_specular_diffuseinverse_map",
@@ -364,7 +443,8 @@ pub const RULES: &[Rule] = &[
         swizzle: [Some(R), Some(G), Some(B), Some(One)],
         dyn_range: Some(0),
         error_metrics: Some("Distance"),
-        verified: true, ..BASE
+        verified: true,
+        ..BASE
     },
     Rule {
         class: "macro",
@@ -372,7 +452,8 @@ pub const RULES: &[Rule] = &[
         format: Some(Dxt5),
         enable_dxt: Some(1),
         dyn_range: Some(0),
-        verified: true, ..BASE
+        verified: true,
+        ..BASE
     },
     Rule {
         class: "ambient_shadow",
@@ -381,7 +462,8 @@ pub const RULES: &[Rule] = &[
         enable_dxt: Some(1),
         swizzle: [Some(One), Some(G), Some(One), Some(One)],
         dyn_range: Some(0),
-        verified: true, ..BASE
+        verified: true,
+        ..BASE
     },
     Rule {
         class: "specular_map",
@@ -390,7 +472,8 @@ pub const RULES: &[Rule] = &[
         enable_dxt: Some(1),
         swizzle: [Some(R), Some(G), Some(B), Some(One)],
         dyn_range: Some(0),
-        verified: true, ..BASE
+        verified: true,
+        ..BASE
     },
     Rule {
         class: "specular_diffuseinverse_map",
@@ -399,7 +482,8 @@ pub const RULES: &[Rule] = &[
         enable_dxt: Some(1),
         swizzle: [Some(One), Some(G), Some(B), Some(One)],
         dyn_range: Some(0),
-        verified: true, ..BASE
+        verified: true,
+        ..BASE
     },
     Rule {
         class: "detail_short",
@@ -410,7 +494,8 @@ pub const RULES: &[Rule] = &[
         swizzle: [Some(A), Some(A), Some(A), Some(One)],
         dyn_range: Some(0),
         mip_filter: Some(F::FadeOut),
-        verified: true, ..BASE
+        verified: true,
+        ..BASE
     },
     Rule {
         class: "normalmap",
@@ -419,7 +504,8 @@ pub const RULES: &[Rule] = &[
         mip_filter: Some(F::NormalizeNormalMapAlpha),
         dyn_range: Some(0),
         error_metrics: Some("Distance"),
-        verified: true, ..BASE
+        verified: true,
+        ..BASE
     },
     Rule {
         class: "normalmap_short",
@@ -431,7 +517,8 @@ pub const RULES: &[Rule] = &[
         mip_filter: Some(F::NormalizeNormalMapAlpha),
         dyn_range: Some(0),
         error_metrics: Some("Distance"),
-        verified: true, ..BASE
+        verified: true,
+        ..BASE
     },
     Rule {
         class: "normalmap_uncompressed",
@@ -441,7 +528,8 @@ pub const RULES: &[Rule] = &[
         mip_filter: Some(F::NormalizeNormalMapAlpha),
         dyn_range: Some(0),
         error_metrics: Some("Distance"),
-        verified: true, ..BASE
+        verified: true,
+        ..BASE
     },
     Rule {
         class: "NormalMapNoise",
@@ -460,7 +548,8 @@ pub const RULES: &[Rule] = &[
         dyn_range: Some(0),
         error_metrics: Some("Distance"),
         mip_filter: Some(F::NormalizeNormalMapAlpha),
-        verified: true, ..BASE
+        verified: true,
+        ..BASE
     },
     Rule {
         class: "normalmap_vhq",
@@ -470,7 +559,8 @@ pub const RULES: &[Rule] = &[
         dyn_range: Some(0),
         error_metrics: Some("Distance"),
         mip_filter: Some(F::NormalizeNormalMapAlpha),
-        verified: true, ..BASE
+        verified: true,
+        ..BASE
     },
     Rule {
         class: "normalmap_hq_fade",
@@ -481,7 +571,8 @@ pub const RULES: &[Rule] = &[
         dyn_range: Some(0),
         error_metrics: Some("Distance"),
         mip_filter: Some(F::NormalizeNormalMapFade),
-        verified: true, ..BASE
+        verified: true,
+        ..BASE
     },
     Rule {
         class: "normalmapFade",
@@ -490,7 +581,8 @@ pub const RULES: &[Rule] = &[
         mip_filter: Some(F::NormalizeNormalMapFade),
         dyn_range: Some(0),
         error_metrics: Some("Distance"),
-        verified: true, ..BASE
+        verified: true,
+        ..BASE
     },
     Rule {
         class: "normalmapFade_uncompressed",
@@ -500,7 +592,8 @@ pub const RULES: &[Rule] = &[
         mip_filter: Some(F::NormalizeNormalMapFade),
         dyn_range: Some(0),
         error_metrics: Some("Distance"),
-        verified: true, ..BASE
+        verified: true,
+        ..BASE
     },
     Rule {
         class: "normalmap_spec",
@@ -509,7 +602,8 @@ pub const RULES: &[Rule] = &[
         mip_filter: Some(F::NormalizeNormalMap),
         dyn_range: Some(0),
         error_metrics: Some("Distance"),
-        verified: true, ..BASE
+        verified: true,
+        ..BASE
     },
     Rule {
         class: "normalmap_parallax",
@@ -520,7 +614,8 @@ pub const RULES: &[Rule] = &[
         mip_filter: Some(F::NormalizeNormalMap),
         dyn_range: Some(0),
         error_metrics: Some("Distance"),
-        verified: true, ..BASE
+        verified: true,
+        ..BASE
     },
     Rule {
         class: "normalmap_spec_uncompressed",
@@ -530,7 +625,8 @@ pub const RULES: &[Rule] = &[
         mip_filter: Some(F::NormalizeNormalMap),
         dyn_range: Some(0),
         error_metrics: Some("Distance"),
-        verified: true, ..BASE
+        verified: true,
+        ..BASE
     },
     Rule {
         class: "normalmap_spec_hq",
@@ -541,9 +637,17 @@ pub const RULES: &[Rule] = &[
         dyn_range: Some(0),
         error_metrics: Some("Distance"),
         mip_filter: Some(F::NormalizeNormalMapAlpha),
-        verified: true, ..BASE
+        verified: true,
+        ..BASE
     },
-    Rule { class: "grayscalealpha", pattern: "*_gs.*", format: Some(Ai88), linear_mips: true, verified: true, ..BASE },
+    Rule {
+        class: "grayscalealpha",
+        pattern: "*_gs.*",
+        format: Some(Ai88),
+        linear_mips: true,
+        verified: true,
+        ..BASE
+    },
     Rule {
         class: "AddAlphaNoise",
         pattern: "*_can.*",
@@ -553,11 +657,46 @@ pub const RULES: &[Rule] = &[
         error_metrics: Some("Distance"),
         ..BASE
     },
-    Rule { class: "TexRGBA4444", pattern: "*_4444.*", format: Some(Argb4444), dyn_range: Some(0), verified: true, ..BASE },
-    Rule { class: "TexRGBA1555", pattern: "*_1555.*", format: Some(Argb1555), dyn_range: Some(0), verified: true, ..BASE },
-    Rule { class: "TexAI88", pattern: "*_88.*", format: Some(Ai88), dyn_range: Some(0), verified: true, ..BASE },
-    Rule { class: "TexDXT1", pattern: "*_dxt1.*", format: Some(Dxt1), dyn_range: Some(0), verified: true, ..BASE },
-    Rule { class: "TexDXT5", pattern: "*_dxt5.*", format: Some(Dxt5), dyn_range: Some(0), verified: true, ..BASE },
+    Rule {
+        class: "TexRGBA4444",
+        pattern: "*_4444.*",
+        format: Some(Argb4444),
+        dyn_range: Some(0),
+        verified: true,
+        ..BASE
+    },
+    Rule {
+        class: "TexRGBA1555",
+        pattern: "*_1555.*",
+        format: Some(Argb1555),
+        dyn_range: Some(0),
+        verified: true,
+        ..BASE
+    },
+    Rule {
+        class: "TexAI88",
+        pattern: "*_88.*",
+        format: Some(Ai88),
+        dyn_range: Some(0),
+        verified: true,
+        ..BASE
+    },
+    Rule {
+        class: "TexDXT1",
+        pattern: "*_dxt1.*",
+        format: Some(Dxt1),
+        dyn_range: Some(0),
+        verified: true,
+        ..BASE
+    },
+    Rule {
+        class: "TexDXT5",
+        pattern: "*_dxt5.*",
+        format: Some(Dxt5),
+        dyn_range: Some(0),
+        verified: true,
+        ..BASE
+    },
 ];
 
 /// The class whose `name` matches the suffix (case-insensitive, no underscore), e.g. `find("nohq")`.
@@ -566,7 +705,16 @@ pub fn find(suffix: &str) -> Option<&'static Rule> {
     if suffix.is_empty() {
         return None;
     }
-    RULES.iter().find(|r| r.suffix().eq_ignore_ascii_case(suffix))
+    RULES
+        .iter()
+        .find(|r| r.suffix().eq_ignore_ascii_case(suffix))
+}
+
+/// The rule for a suffix: its class, else `PLAIN`. The one place that says "an unknown suffix gets
+/// the default rule" (observed #054: ImageToPAA wrote the same type, tags and mips for `_foo`,
+/// `_xyz`, `_co2`, `_nrm`, `_caa`, `_cox`, `_nohq2` and a name with no underscore).
+pub fn for_suffix(suffix: &str) -> &'static Rule {
+    find(suffix).unwrap_or(&PLAIN)
 }
 
 /// The table as text, one line per class, keys spelled as in the cfg. Meant to be diffed against
@@ -579,7 +727,12 @@ pub fn table_text() -> String {
     out.push_str("# keys acted on: name format enableDXT channelSwizzleR channelSwizzleG channelSwizzleB channelSwizzleA mipmapFilter dynRange autoreduce\n");
     out.push_str("# keys recorded only: errorMetrics\n# unknown keys: none\n");
     for r in RULES {
-        out.push_str(&format!("class={} parent={} name={}", r.class, r.parent.unwrap_or("-"), r.pattern));
+        out.push_str(&format!(
+            "class={} parent={} name={}",
+            r.class,
+            r.parent.unwrap_or("-"),
+            r.pattern
+        ));
         if let Some(f) = r.format {
             out.push_str(&format!(" format={}", f.cfg()));
         }
@@ -595,7 +748,7 @@ pub fn table_text() -> String {
             out.push_str(&format!(" dynRange={v}"));
         }
         if let Some(f) = r.mip_filter {
-            out.push_str(&format!(" mipmapFilter={}", f.cfg()));
+            out.push_str(&format!(" mipmapFilter={f:?}"));
         }
         if let Some(v) = r.autoreduce {
             out.push_str(&format!(" autoreduce={v}"));
@@ -603,7 +756,11 @@ pub fn table_text() -> String {
         if let Some(m) = r.error_metrics {
             out.push_str(&format!(" errorMetrics={m}"));
         }
-        out.push_str(&format!(" verified={} routable={}\n", u8::from(r.verified), u8::from(r.routable())));
+        out.push_str(&format!(
+            " verified={} routable={}\n",
+            u8::from(r.verified),
+            u8::from(r.routable())
+        ));
     }
     out
 }

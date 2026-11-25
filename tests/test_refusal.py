@@ -1,9 +1,14 @@
-"""Per-file encoder refusal and routing per suffix (#025, criterion 5).
+"""Per-file encoder refusal and routing per suffix (#025, criterion 5; alpha refusals gone in #31).
 
 The encoder alone decides what it refuses (`_paa.NeedsImageToPAA`); Python never predicts it. So the
 expectations below come from `_paa.supported` and from asking `_paa.encode` itself, never from a suffix
 list written here. The suffixes are the ones Bohemia's own TexConvert.cfg names (read from the tool's folder).
 Tests that run ImageToPAA are skipped with a reason when it is not installed.
+
+Since #31 (decision 47) the encoder refuses no alpha file: soft alpha and DXT1 1-bit alpha are encoded by Loki. The
+per-file fallback (the encoder says no, ImageToPAA converts) is still the machinery for anything the encoder may
+refuse, so its tests drive it with a stand-in encoder that refuses files named `refused_*` the way the real one
+refuses a noise filter; separate tests pin that the real encoder takes every alpha file.
 """
 
 import re
@@ -44,6 +49,22 @@ def bit_alpha_png(path: Path, size: int = 64) -> Path:
     return path
 
 
+REASON = "noise mip filter"
+
+
+@pytest.fixture
+def refusing(monkeypatch):
+    """The encoder refuses the files named `refused_*` with a short reason; everything else is encoded for real."""
+    real = _paa.encode
+
+    def encode(src, dst, *args, **kwargs):
+        if Path(src).name.startswith("refused_"):
+            raise _paa.NeedsImageToPAA(REASON)
+        return real(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(_paa, "encode", encode)
+
+
 def encoder_refuses(png: Path, tmp_path: Path) -> str | None:
     """The encoder's own answer: its short reason, or None when it encodes the file."""
     try:
@@ -73,10 +94,33 @@ def run_all(app, timeout=240.0):
 
 
 @pytest.mark.parametrize("name", ["soft_ca.png", "mask_co.png"])  # soft alpha; DXT1 1-bit alpha
-def test_refused_file_is_not_converted_and_says_why_without_the_tool(tmp_path, name):
+def test_alpha_files_are_converted_by_loki_without_the_tool(tmp_path, name):
+    """#31: no alpha refusal is left, so these need no Arma 3 Tools."""
     png = (soft_alpha_png if name == "soft_ca.png" else bit_alpha_png)(tmp_path / name)
+    assert encoder_refuses(png, tmp_path) is None
+    res = core.convert(png, None, None, core.LOKI)
+    assert res.ok and res.converter == core.LOKI and not res.needs_tool, res.error
+    assert png.with_suffix(".paa").exists()
+
+
+def test_binary_alpha_ca_shrunk_by_max_size_converts_in_loki(tmp_path):
+    """#52 / #31 criterion 8: a hard-edged `_ca` whose edge is off the 2x2 grid (a 1 px hole at an odd column) turns
+    soft in the mip filter when max size shrinks it. It used to be handed to ImageToPAA ("soft alpha"); Loki encodes it."""
+    im = Image.new("RGBA", (128, 128), (200, 100, 50, 255))
+    for y in range(128):
+        im.putpixel((63, y), (200, 100, 50, 0))
+    png = tmp_path / "hole_ca.png"
+    im.save(png)
+    res = core.convert(png, None, 64, core.LOKI)
+    assert res.ok and res.converter == core.LOKI and not res.needs_tool, res.error
+    assert core.paa_size(png.with_suffix(".paa")) == (64, 64)
+
+
+@pytest.mark.parametrize("name", ["refused_soft_ca.png", "refused_mask_co.png"])
+def test_refused_file_is_not_converted_and_says_why_without_the_tool(tmp_path, refusing, name):
+    png = (soft_alpha_png if "soft" in name else bit_alpha_png)(tmp_path / name)
     why = encoder_refuses(png, tmp_path)
-    assert why in ("soft alpha", "1-bit alpha")
+    assert why == REASON
     res = core.convert(png, None, None, core.LOKI)
     assert not res.ok and res.needs_tool and not res.retry
     assert res.error == f"needs Arma 3 Tools ({why})"
@@ -86,9 +130,9 @@ def test_refused_file_is_not_converted_and_says_why_without_the_tool(tmp_path, n
 
 
 @needs_tool
-@pytest.mark.parametrize("name", ["soft_ca.png", "mask_co.png"])
-def test_refused_file_is_converted_by_imagetopaa_when_found(tmp_path, name):
-    png = (soft_alpha_png if name == "soft_ca.png" else bit_alpha_png)(tmp_path / name)
+@pytest.mark.parametrize("name", ["refused_soft_ca.png", "refused_mask_co.png"])
+def test_refused_file_is_converted_by_imagetopaa_when_found(tmp_path, refusing, name):
+    png = (soft_alpha_png if "soft" in name else bit_alpha_png)(tmp_path / name)
     assert encoder_refuses(png, tmp_path)
     res = core.convert(png, TOOL, None, core.LOKI)
     assert res.ok and res.converter == core.BOHEMIA and not res.needs_tool, res.error
@@ -97,8 +141,8 @@ def test_refused_file_is_converted_by_imagetopaa_when_found(tmp_path, name):
 
 
 @needs_tool
-def test_refusal_fallback_honours_max_size(tmp_path):
-    png = soft_alpha_png(tmp_path / "big_ca.png", 128)
+def test_refusal_fallback_honours_max_size(tmp_path, refusing):
+    png = soft_alpha_png(tmp_path / "refused_big_ca.png", 128)
     res = core.convert(png, TOOL, 64, core.LOKI)
     assert res.ok and res.converter == core.BOHEMIA, res.error
     assert core.check_png(png, 64).status == core.UP_TO_DATE
@@ -107,18 +151,18 @@ def test_refusal_fallback_honours_max_size(tmp_path):
 # --- the command line -------------------------------------------------------------------------------------
 
 
-def test_cli_prints_a_refusal_as_needs_tool_and_counts_it(tmp_path, monkeypatch, capsys):
+def test_cli_prints_a_refusal_as_needs_tool_and_counts_it(tmp_path, monkeypatch, capsys, refusing):
     def absent(override=None, steam_roots=None):
         raise core.ToolNotFound("absent")
 
     monkeypatch.setattr(core, "find_imagetopaa", absent)
-    png = soft_alpha_png(tmp_path / "soft_ca.png")
+    png = soft_alpha_png(tmp_path / "refused_soft_ca.png")
     ok = tmp_path / "plain_co.png"
     Image.effect_noise((64, 64), 60).convert("RGB").save(ok)
     code = cli.main(["convert", str(png), str(ok)])
     out = capsys.readouterr().out
     assert code == 1
-    assert re.search(r"needs-tool\s+.*soft_ca\.png: needs Arma 3 Tools \(soft alpha\)", out)
+    assert re.search(r"needs-tool\s+.*refused_soft_ca\.png: needs Arma 3 Tools \(noise mip filter\)", out)
     assert "converted" in out and "1 need Arma 3 Tools, 0 errors" in out
     assert not png.with_suffix(".paa").exists() and ok.with_suffix(".paa").exists()
 
@@ -193,7 +237,9 @@ def test_every_cfg_suffix_with_the_tool_absent(tmp_path, suffix_set):
                     assert row.status_text.startswith("needs Arma 3 Tools")
             seen.add((made is not None, text is not None))
         assert {(True, False), (False, True)} <= seen  # both outcomes occurred in the set
-        assert any("soft alpha" in r.status_text for r in rows.values())  # a per-file refusal reached the row
+        # #31: no alpha file is refused any more; the soft-alpha files of the set were all converted by Loki
+        assert not any("soft alpha" in r.status_text or "1-bit alpha" in r.status_text for r in rows.values())
+        assert any(r.made_by == core.LOKI for p, r in rows.items() if p.parent.name == "soft")
     finally:
         app.close()
 

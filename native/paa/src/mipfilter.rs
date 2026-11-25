@@ -26,7 +26,7 @@
 //! Everything is `f64`; the only libm calls are `sqrt` and `powf` (in the sRGB curves), so the
 //! output is the same on every machine except for a possible last-bit difference in `powf`.
 
-use crate::img::Image;
+use crate::img::{halve_with, Image};
 use crate::rules::Filter;
 use std::sync::OnceLock;
 
@@ -64,87 +64,101 @@ fn normalised(m: [f64; 3]) -> [f64; 3] {
 }
 
 /// True for the four filters that treat the texture as a tangent-space normal map.
-fn is_normal_filter(filter: Option<Filter>) -> bool {
+pub(crate) fn is_normal_filter(filter: Option<Filter>) -> bool {
     matches!(
         filter,
-        Some(Filter::NormalizeNormalMap | Filter::NormalizeNormalMapAlpha | Filter::NormalizeNormalMapFade | Filter::NormalizeNormalMapNoise)
+        Some(
+            Filter::NormalizeNormalMap
+                | Filter::NormalizeNormalMapAlpha
+                | Filter::NormalizeNormalMapFade
+                | Filter::NormalizeNormalMapNoise
+        )
     )
 }
 
 /// sRGB byte to linear light, by table.
-fn to_linear(v: u8) -> f64 {
+pub(crate) fn to_linear(v: u8) -> f64 {
     static T: OnceLock<[f64; 256]> = OnceLock::new();
     T.get_or_init(|| {
         let mut t = [0f64; 256];
         for (i, e) in t.iter_mut().enumerate() {
             let c = i as f64 / 255.0;
-            *e = if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) };
+            *e = if c <= 0.04045 {
+                c / 12.92
+            } else {
+                ((c + 0.055) / 1.055).powf(2.4)
+            };
         }
         t
     })[v as usize]
 }
 
 /// Linear light to an sRGB byte (inverse of `to_linear`), rounded and clamped.
-fn from_linear(l: f64) -> u8 {
-    let c = if l <= 0.0031308 { l * 12.92 } else { 1.055 * l.powf(1.0 / 2.4) - 0.055 };
+pub(crate) fn from_linear(l: f64) -> u8 {
+    let c = if l <= 0.0031308 {
+        l * 12.92
+    } else {
+        1.055 * l.powf(1.0 / 2.4) - 0.055
+    };
     (c * 255.0).round().clamp(0.0, 255.0) as u8
 }
 
-/// The four source texels of output texel (x, y) of the half-size level.
-fn quad(img: &Image, x: usize, y: usize) -> [[u8; 4]; 4] {
-    let mut px = [[0u8; 4]; 4];
-    for (i, (dx, dy)) in [(0, 0), (1, 0), (0, 1), (1, 1)].into_iter().enumerate() {
-        let o = ((2 * y + dy) * img.w + 2 * x + dx) * 4;
-        px[i].copy_from_slice(&img.rgba[o..o + 4]);
-    }
-    px
+/// `sum / weights`, rounded half to even, in integers (exact: no float weights).
+fn mean_half_even(sum: u64, weights: u64) -> u8 {
+    let f = sum / weights;
+    let twice_rem = 2 * (sum - f * weights);
+    let r = if twice_rem > weights || (twice_rem == weights && f & 1 == 1) {
+        f + 1
+    } else {
+        f
+    };
+    r.min(255) as u8
 }
 
 /// Halve with colour weighted by alpha. `linear`: average in linear light, else in the bytes.
-/// Equal weights when all four texels are transparent; alpha is the plain box mean.
+/// Alpha is the plain box mean.
+///
+/// Bytes (alpha-weighted classes: normal maps with alpha): the exact weighted mean `sum(p*a) / sum(a)`
+/// rounded half to even; a quad whose four alphas are all 255 or all 0 is the plain byte box
+/// (`halve_chain`: R and G truncate, B rounds). Fitted to ImageToPAA `_noex` (ARGB4444 and ARGB1555)
+/// on flat and non-flat data with alpha below 255 (research/rust-deep/logs/rounding-053): every
+/// stored level of every mip matched, where the earlier float weights with a floor (R, G) or
+/// +0.5 floor (B) were off by one on up to 12 percent of texels (F11 of research/rust-deep/REPORT.md).
 fn halve_weighted(img: &Image, linear: bool) -> Image {
-    let (w, h) = (img.w / 2, img.h / 2);
-    let mut rgba = vec![0u8; w * h * 4];
-    for y in 0..h {
-        for x in 0..w {
-            let px = quad(img, x, y);
-            let wsum: f64 = px.iter().map(|p| p[3] as f64).sum();
-            // Fully transparent quad: no weights, so fall back to a plain average (1/4 each).
-            let wt = |p: &[u8; 4]| if wsum > 0.0 { p[3] as f64 / wsum } else { 0.25 };
-            let d = &mut rgba[(y * w + x) * 4..][..4];
-            for c in 0..3 {
-                d[c] = if linear {
-                    from_linear(px.iter().map(|p| to_linear(p[c]) * wt(p)).sum())
-                } else {
-                    // R and G truncate, B rounds (see `halve_chain`)
-                    (px.iter().map(|p| p[c] as f64 * wt(p)).sum::<f64>() + if c < 2 { 0.0 } else { 0.5 }).floor().clamp(0.0, 255.0) as u8
-                };
-            }
-            // +2 makes the integer divide round to nearest, matching the tool's alpha.
-            d[3] = ((px.iter().map(|p| p[3] as u32).sum::<u32>() + 2) / 4) as u8;
+    halve_with(img, |px| {
+        let wsum: f64 = px.iter().map(|p| p[3] as f64).sum();
+        // Fully transparent quad: no weights, so fall back to a plain average (1/4 each).
+        let wt = |p: &[u8; 4]| if wsum > 0.0 { p[3] as f64 / wsum } else { 0.25 };
+        let wint: u64 = px.iter().map(|p| p[3] as u64).sum();
+        let box_quad = wint == 0 || wint == 4 * 255;
+        let mut d = [0u8; 4];
+        for c in 0..3 {
+            d[c] = if linear {
+                from_linear(px.iter().map(|p| to_linear(p[c]) * wt(p)).sum())
+            } else if box_quad {
+                let sum: u32 = px.iter().map(|p| p[c] as u32).sum();
+                (if c < 2 { sum / 4 } else { (sum + 2) / 4 }) as u8
+            } else {
+                mean_half_even(px.iter().map(|p| p[c] as u64 * p[3] as u64).sum(), wint)
+            };
         }
-    }
-    Image { w, h, rgba }
+        // +2 makes the integer divide round to nearest, matching the tool's alpha.
+        d[3] = ((px.iter().map(|p| p[3] as u32).sum::<u32>() + 2) / 4) as u8;
+        d
+    })
 }
 
 /// The oracle's byte box for a mip chain: the mean of the four texels truncated for R and G and
 /// rounded for B and A. Observed on `_raw` ARGB1555 files: exact on every texel of mips 1 to 3
 /// of a photo-like image, with R and G 100% floor and B 100% round; the truncation also shows as a mean
-/// that drifts down by about 0.4 per level in R and G in DXT mips of real art. Not used by
-/// `limit_size`, which is Loki's own resize and not an ImageToPAA behaviour.
+/// that drifts down by about 0.4 per level in R and G in DXT mips of real art.
 fn halve_chain(img: &Image) -> Image {
-    let (w, h) = (img.w / 2, img.h / 2);
-    let mut rgba = vec![0u8; w * h * 4];
-    for y in 0..h {
-        for x in 0..w {
-            let s = |dx: usize, dy: usize, c: usize| img.rgba[((2 * y + dy) * img.w + 2 * x + dx) * 4 + c] as u32;
-            for c in 0..4 {
-                let sum = s(0, 0, c) + s(1, 0, c) + s(0, 1, c) + s(1, 1, c);
-                rgba[(y * w + x) * 4 + c] = (if c < 2 { sum / 4 } else { (sum + 2) / 4 }) as u8;
-            }
-        }
-    }
-    Image { w, h, rgba }
+    halve_with(img, |q| {
+        std::array::from_fn(|c| {
+            let sum = q[0][c] as u32 + q[1][c] as u32 + q[2][c] as u32 + q[3][c] as u32;
+            (if c < 2 { sum / 4 } else { (sum + 2) / 4 }) as u8
+        })
+    })
 }
 
 /// The next (half size) level of the chain for `filter`; `linear` selects the linear-light
@@ -163,11 +177,30 @@ pub(crate) fn shapes_output(filter: Option<Filter>) -> bool {
     is_normal_filter(filter) || filter == Some(Filter::FadeOut)
 }
 
+/// Renormalise every texel's xyz as a tangent-space vector to unit length (alpha is left alone; a zero
+/// vector becomes the flat normal). Used after an output-size resample (`resize`).
+pub(crate) fn renormalise(rgba: &mut [u8]) {
+    for p in rgba.chunks_exact_mut(4) {
+        let v = [p[0], p[1], p[2]].map(|c| c as f64 / 255.0 * 2.0 - 1.0);
+        let n = normalised(v);
+        for c in 0..3 {
+            p[c] = encode_unit(n[c]);
+        }
+    }
+}
+
 /// Shape a level for storing: renormalise normal maps (`NormalizeNormalMapFade` first moves the
 /// averaged vector toward the flat normal (0, 0, 1) by `fade_amount`) or, for `FadeOut`, move every
 /// channel toward 128 by it. Other filters leave the level alone.
 pub(crate) fn output(rgba: &mut [u8], filter: Option<Filter>, w: usize, h: usize) {
-    let t = if matches!(filter, Some(Filter::NormalizeNormalMapFade | Filter::FadeOut)) { fade_amount(w.max(h)) } else { 0.0 };
+    let t = if matches!(
+        filter,
+        Some(Filter::NormalizeNormalMapFade | Filter::FadeOut)
+    ) {
+        fade_amount(w.max(h))
+    } else {
+        0.0
+    };
     if is_normal_filter(filter) {
         // Lerp the decoded vector toward the flat normal (0, 0, 1) by t, then renormalise and
         // re-encode. With t = 0 this is a plain renormalise.
@@ -178,10 +211,12 @@ pub(crate) fn output(rgba: &mut [u8], filter: Option<Filter>, w: usize, h: usize
                 p[c] = encode_unit(n[c]);
             }
         }
-    } else if filter == Some(Filter::FadeOut) && t > 0.0 {
-        // FadeOut: lerp every byte toward 128 by t; t = 0 means no change, so skip.
+    } else if filter == Some(Filter::FadeOut) {
+        // FadeOut: lerp every byte toward 128 by t; t = 0 leaves every byte as it was.
         for v in rgba.iter_mut() {
-            *v = (*v as f64 + (128.0 - *v as f64) * t).round().clamp(0.0, 255.0) as u8;
+            *v = (*v as f64 + (128.0 - *v as f64) * t)
+                .round()
+                .clamp(0.0, 255.0) as u8;
         }
     }
 }

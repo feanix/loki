@@ -6,5 +6,5 @@ ls demo_data/textures
 remove demo_data/textures/grass_co.png
 dump
 touch demo_data/textures/grass_co.png
-wait 1
+wait 1  # must stay a real wait: a removed file is not watched, so idle would return at once and prove nothing
 ls demo_data/textures

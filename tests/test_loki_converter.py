@@ -52,29 +52,26 @@ def by_name(app):
 
 
 @pytest.mark.parametrize(
-    ("name", "size", "converter", "tool", "want"),
+    ("name", "converter", "tool", "want"),
     [
-        ("a_co.png", (512, 512), core.LOKI, False, core.LOKI),
-        ("a_ca.png", (512, 512), core.LOKI, False, core.LOKI),
-        ("a.png", (512, 512), core.LOKI, False, core.LOKI),
-        ("a_co.png", (4096, 4096), core.LOKI, False, core.LOKI),
-        ("a_co.png", (8192, 8192), core.LOKI, True, core.BOHEMIA),
-        ("a_co.png", (8192, 8192), core.LOKI, False, core.NEEDS_TOOL),
-        ("a_co.png", (512, 8192), core.LOKI, False, core.NEEDS_TOOL),  # either side counts
-        ("a_cat.png", (512, 512), core.LOKI, True, core.BOHEMIA),
-        ("a_cat.png", (512, 512), core.LOKI, False, core.NEEDS_TOOL),
-        ("a_sky.png", (512, 512), core.LOKI, True, core.BOHEMIA),
-        ("a_co.png", (512, 512), core.BOHEMIA, True, core.BOHEMIA),
-        ("a_co.png", (512, 512), core.BOHEMIA, False, core.NEEDS_TOOL),
+        ("a_co.png", core.LOKI, False, core.LOKI),
+        ("a_ca.png", core.LOKI, False, core.LOKI),
+        ("a.png", core.LOKI, False, core.LOKI),
+        ("a_cat.png", core.LOKI, True, core.BOHEMIA),
+        ("a_cat.png", core.LOKI, False, core.NEEDS_TOOL),
+        ("a_sky.png", core.LOKI, False, core.LOKI),  # #31: `_sky` passes the relative checks, Loki encodes it
+        ("a_co.png", core.BOHEMIA, True, core.BOHEMIA),
+        ("a_co.png", core.BOHEMIA, False, core.NEEDS_TOOL),
     ],
 )
-def test_route(name, size, converter, tool, want):
-    assert core.route(name, size, converter, tool) == want
+def test_route(name, converter, tool, want):
+    """Size plays no part: a PNG over 4096 is Loki's too (#55)."""
+    assert core.route(name, converter, tool) == want
 
 
 def test_needs_tool_texts():
-    assert core.needs_tool_reason("x_cat.png", (64, 64)) == "needs Arma 3 Tools for _cat"
-    assert core.needs_tool_reason("x_co.png", (8192, 8192)) == "over 4096: needs Arma 3 Tools"
+    assert core.needs_tool_reason("x_cat.png") == "needs Arma 3 Tools for _cat"
+    assert core.needs_tool_reason("x_co.png", core.BOHEMIA) == "ImageToPAA.exe not found"
 
 
 # --- core.convert ------------------------------------------------------------------------------------
@@ -101,16 +98,18 @@ def test_loki_route_refuses_unsupported_suffix_without_tool_and_writes_nothing(t
     assert not png.with_suffix(".paa").exists()
 
 
-def test_loki_sends_other_suffixes_and_huge_pngs_to_the_tool(tmp_path, monkeypatch):
+def test_loki_sends_other_suffixes_to_the_tool_but_encodes_a_huge_png_itself(tmp_path, monkeypatch):
     monkeypatch.setattr(core, "_run_tool", fake_tool_run)
     cat = make_png(tmp_path / "a_cat.png")
     res = core.convert(cat, FAKE_TOOL, None, core.LOKI)
     assert res.ok and res.converter == core.BOHEMIA
     huge = tmp_path / "big_co.png"
-    Image.new("1", (8192, 8192)).save(huge)  # header size is what routes it
-    assert core.convert(huge, None, None, core.LOKI).error == "over 4096: needs Arma 3 Tools"
-    res = core.convert(huge, FAKE_TOOL, None, core.LOKI)
-    assert res.ok and res.converter == core.BOHEMIA and core.paa_size(huge.with_suffix(".paa")) == (8192, 8192)
+    Image.new("RGB", (8192, 64), (90, 120, 150)).save(huge)
+    res = core.convert(huge, None, None, core.LOKI)  # no tool: Loki halves it to 4096 (#55)
+    assert res.ok and res.converter == core.LOKI and core.paa_size(huge.with_suffix(".paa")) == (4096, 32)
+    res = core.convert(huge, None, 1024, core.LOKI)  # the user's max size applies on top
+    assert res.ok and core.paa_size(huge.with_suffix(".paa")) == (1024, 8) == core.target_size(8192, 64, 1024)
+
 
 
 def test_bohemia_selected_sends_everything_to_the_tool(tmp_path, monkeypatch):
@@ -210,22 +209,16 @@ def test_mixed_suffixes_tool_absent_and_present(tmp_path, monkeypatch):
         app.close()
 
 
-def test_png_over_4096_needs_the_tool_with_loki_selected(tmp_path, monkeypatch):
-    monkeypatch.setattr(core, "_run_tool", fake_tool_run)
+def test_png_over_4096_is_encoded_by_loki_with_no_tool(tmp_path):
     huge = tmp_path / "huge_co.png"
-    Image.new("1", (8192, 8192)).save(huge)
+    Image.new("RGB", (8192, 64), (90, 120, 150)).save(huge)
     app = make_app(tmp_path, tool_gone)
     try:
         app.add_files([huge])
-        assert app.rows[0].status_text == "over 4096: needs Arma 3 Tools"
-        assert not app.convert_all() or app.rows[0].status == core.NEEDS_TOOL
-    finally:
-        app.close()
-    app = make_app(tmp_path)
-    try:
-        app.add_files([huge])
+        assert app.rows[0].status != core.NEEDS_TOOL
         run_all(app)
-        assert app.rows[0].made_by == core.BOHEMIA
+        assert app.rows[0].made_by == core.LOKI and app.rows[0].status == core.UP_TO_DATE
+        assert core.paa_size(huge.with_suffix(".paa")) == (4096, 32)
     finally:
         app.close()
 

@@ -88,6 +88,19 @@ class Watcher:
         """True once a pass has seen this key, so a later save is a real save, not the baseline."""
         return key in self._known
 
+    def unsettled(self) -> list[str]:
+        """Keys of listed files whose current save the watcher has not yet handled: not baselined, or the
+        file's signature differs from the last consumed one (still settling, or waiting on a lock)."""
+        with self._lock:
+            out = []
+            for f in self.settings.files():
+                sig = core.file_sig(Path(f.path))
+                if sig is None:
+                    continue  # gone: nothing to handle
+                if f.key not in self._known or self._consumed.get(f.key) != sig:
+                    out.append(f.key)
+            return out
+
     def attempts(self, key: str) -> list[float]:
         """Clock times of the retry checks made for a save waiting on a lock (empty when none is waiting)."""
         with self._lock:
@@ -106,7 +119,7 @@ class Watcher:
             png = next((f for f in self.settings.files() if f.key == key), None)
             if png is None:
                 return
-            e = core.check_png(png.path, png.max_size)
+            e = core.check_png(png.path, png.max_size, png.size)
             held = replace(e, status=core.IN_USE, reason=reason)
             chain = self._chain.get(key)
             since = chain[1] if chain is not None and chain[0] == sig else now
@@ -126,7 +139,7 @@ class Watcher:
                     continue
                 rt.last = now
                 rt.attempts.append(now)
-            out.append(core.check_png(f.path, f.max_size))
+            out.append(core.check_png(f.path, f.max_size, f.size))
         return out
 
     def poll_once(self) -> list[str]:
@@ -186,7 +199,7 @@ class Watcher:
             self._retry.pop(key, None)
             self._chain.pop(key, None)
         if submitted:
-            entries = [core.check_png(f.path, f.max_size) if f.key in submitted else e for f, e in zip(files, entries, strict=True)]
+            entries = [core.check_png(f.path, f.max_size, f.size) if f.key in submitted else e for f, e in zip(files, entries, strict=True)]
         view = [(e.path, e.status, e.reason, e.size) for e in entries]
         self.entries = entries
         if submitted or view != self._view:

@@ -71,7 +71,7 @@ def blocks(out: str) -> list[list[str]]:
 
 
 def row(block: list[str], name: str) -> str:
-    """The digest row of a file by name, with its folder cut off: 'name | max=.. | bake=.. | status | size'."""
+    """The digest row of a file by name, with its folder cut off: 'name | max=.. | auto watch=.. | status | size'."""
     (line,) = [ln for ln in block if (os.sep + name + " | ") in ln]
     return line.strip().split(os.sep)[-1]
 
@@ -96,7 +96,7 @@ def test_criterion1_no_folder_anywhere(env):
     assert r.returncode == 0, r.stderr
     (d,) = blocks(r.stdout)
     assert d[0] == "controls: Converter, Convert all, All on, All off, Remove, About"
-    assert d[1] == "columns: Bake, File, Folder, Size, Max size, Status"
+    assert d[1] == "columns: Auto watch, File, Folder, Size, Max size, Output size, Status"
     assert "  files: 0" in d
     text = r.stdout.lower()
     assert "choose folder" not in text and "subfolder" not in text and "folder:" not in text
@@ -111,12 +111,12 @@ def test_criterion2_drop_mixed_files_adds_rows_only(env):
     r = run(
         env,
         f"drop {tex / 'a.png'} \"{more / 'c.png'}\" {tex / 'notes.txt'} {tex}\n"
-        f'dump\ndrop "{more / "sp ace.png"}" {tex / "A.PNG"} {tex / "ghost.png"}\ndump\nwait 0.6\ndump\nls {tex}\n',
+        f'dump\ndrop "{more / "sp ace.png"}" {tex / "A.PNG"} {tex / "ghost.png"}\ndump\nidle\ndump\nls {tex}\n',
     )
     assert r.returncode == 0, r.stderr
     first, second, third, listing = blocks(r.stdout)
     assert [x.split(" | ")[0].split(os.sep)[-1] for x in rows_of(first)] == ["a.png", "c.png"]
-    assert row(first, "a.png") == "a.png | max=off ▾ | bake=☐ off | needs_converting | 64x64"
+    assert row(first, "a.png") == "a.png | max=off ▾ | auto watch=☐ off | needs_converting | 64x64"
     assert "status: Added 2 files; skipped 2 not PNG" in first
     names = [x.split(" | ")[0].split(os.sep)[-1] for x in rows_of(second)]
     assert names == ["a.png", "c.png", "sp ace.png"]  # the re-drop with another case added nothing
@@ -140,10 +140,10 @@ def test_criterion3_two_rows_same_source_size_own_caps_fake_tool(env):
     )
     assert r.returncode == 0, r.stderr
     before, after, info1, info2 = blocks(r.stdout)
-    assert row(before, "wide1.png") == "wide1.png | max=off ▾ | bake=☐ off | needs_converting | 512x256"
-    assert row(before, "wide2.png") == "wide2.png | max=256 ▾ | bake=☐ off | needs_converting | 512x256"
-    assert row(after, "wide1.png") == "wide1.png | max=off ▾ | bake=☐ off | up_to_date | 512x256 | made_by=bohemia"
-    assert row(after, "wide2.png") == "wide2.png | max=256 ▾ | bake=☐ off | up_to_date | 512x256 | made_by=bohemia"
+    assert row(before, "wide1.png") == "wide1.png | max=off ▾ | auto watch=☐ off | needs_converting | 512x256"
+    assert row(before, "wide2.png") == "wide2.png | max=256 ▾ | auto watch=☐ off | needs_converting | 512x256"
+    assert row(after, "wide1.png") == "wide1.png | max=off ▾ | auto watch=☐ off | up_to_date | 512x256 | made_by=bohemia"
+    assert row(after, "wide2.png") == "wide2.png | max=256 ▾ | auto watch=☐ off | up_to_date | 512x256 | made_by=bohemia"
     assert info1[0].endswith("512x256") and info2[0].endswith("256x128")
 
 
@@ -157,15 +157,15 @@ def test_criterion4_bake_converts_only_the_listed_toggled_file_at_its_cap(env):
             env,
             f"drop {tex / 'save1.png'} {tex / 'save2.png'}\nmaxsize {tex / 'save1.png'} 256\n"
             f"toggle {tex / 'save1.png'}\ndump\n"
-            f"touch {tex / 'save1.png'}\ntouch {tex / 'save2.png'}\ntouch {tex / 'unlisted.png'}\nwait 1.5\n"
+            f"touch {tex / 'save1.png'}\ntouch {tex / 'save2.png'}\ntouch {tex / 'unlisted.png'}\nidle\n"
             f"dump\npaainfo {tex / 'save1.png'}\npaainfo {tex / 'save2.png'}\nls {tex}\n",
         ),
     )
     assert r.returncode == 0, r.stderr
     before, after, info1, info2, listing = blocks(r.stdout)
-    assert row(before, "save1.png") == "save1.png | max=256 ▾ | bake=☑ on | needs_converting | 512x256"
-    assert row(after, "save1.png") == "save1.png | max=256 ▾ | bake=☑ on | up_to_date | 512x256 | made_by=bohemia"
-    assert row(after, "save2.png") == "save2.png | max=off ▾ | bake=☐ off | needs_converting | 512x256"
+    assert row(before, "save1.png") == "save1.png | max=256 ▾ | auto watch=☑ on | needs_converting | 512x256"
+    assert row(after, "save1.png") == "save1.png | max=256 ▾ | auto watch=☑ on | up_to_date | 512x256 | made_by=bohemia"
+    assert row(after, "save2.png") == "save2.png | max=off ▾ | auto watch=☐ off | needs_converting | 512x256"
     assert info1[0].endswith("256x128") and info2[0].endswith("unreadable")
     assert "save1.paa" in listing[0] and "save2.paa" not in listing[0] and "unlisted.paa" not in listing[0]
 
@@ -182,10 +182,10 @@ def test_criterion4_all_on_all_off_and_convert_all_over_the_list(env):
     )
     assert r.returncode == 0, r.stderr
     on, off, done = blocks(r.stdout)
-    assert all("bake=☑ on" in x for x in rows_of(on)) and len(rows_of(on)) == 4
-    assert not any("bake=☑ on" in x for x in rows_of(off))
-    assert row(done, "a.png") == "a.png | max=off ▾ | bake=☐ off | up_to_date | 64x64 | made_by=bohemia"
-    assert row(done, "badcopy.png").startswith("badcopy.png | max=off ▾ | bake=☐ off | error: ImageToPAA failed (exit 3): rejected")
+    assert all("auto watch=☑ on" in x for x in rows_of(on)) and len(rows_of(on)) == 4
+    assert not any("auto watch=☑ on" in x for x in rows_of(off))
+    assert row(done, "a.png") == "a.png | max=off ▾ | auto watch=☐ off | up_to_date | 64x64 | made_by=bohemia"
+    assert row(done, "badcopy.png").startswith("badcopy.png | max=off ▾ | auto watch=☐ off | error: ImageToPAA failed (exit 3): rejected")
     assert row(done, "odd.png").split(" | ")[3].startswith("flagged: 50x30")
     assert row(done, "bad.png").split(" | ")[3].startswith("flagged: cannot read")
     assert "status: Converted 1 file(s), 1 failed" in done
@@ -199,6 +199,7 @@ def test_criterion5_remove_leaves_files_and_stops_watching(env):
             env,
             f"drop {tex / 'a.png'} {tex / 'b.png'}\nconvertall\nls {tex}\n"
             f"toggle {tex / 'a.png'}\nremove {tex / 'a.png'}\ndump\nls {tex}\n"
+            # a real wait: a removed file is not watched, so idle would return at once and prove nothing
             f"touch {tex / 'a.png'}\nwait 0.7\nls {tex}\n",
         ),
     )
@@ -221,19 +222,100 @@ def test_criterion6_persistence_missing_and_recovery(env):
             f"drop {tex / 'a.png'} {tex / 'b.png'} \"{env['more'] / 'c.png'}\"\n"
             f"maxsize {tex / 'b.png'} 256\ntoggle {tex / 'a.png'}\ndump\n"
             f"move {tex / 'b.png'} {hidden}\nrestart\ndump\n"
-            f"move {hidden} {tex / 'b.png'}\nwait 0.7\ndump\n",
+            f"move {hidden} {tex / 'b.png'}\nidle\ndump\n",
         ),
     )
     assert r.returncode == 0, r.stderr
     before, gone, back = blocks(r.stdout)
     assert rows_of(gone)[0] == rows_of(before)[0]
-    assert row(gone, "b.png") == "b.png | max=256 ▾ | bake=☐ off | missing | ?"
-    assert row(gone, "a.png").startswith("a.png | max=off ▾ | bake=☑ on")
-    assert "status: 3 png: 2 need converting, 0 flagged, 1 missing, 0 errors; bake on for 1" in gone
-    assert row(back, "b.png") == "b.png | max=256 ▾ | bake=☐ off | needs_converting | 128x64"
+    assert row(gone, "b.png") == "b.png | max=256 ▾ | auto watch=☐ off | missing | ?"
+    assert row(gone, "a.png").startswith("a.png | max=off ▾ | auto watch=☑ on")
+    assert "status: 3 png: 2 need converting, 0 flagged, 1 missing, 0 errors; auto watch on for 1" in gone
+    assert row(back, "b.png") == "b.png | max=256 ▾ | auto watch=☐ off | needs_converting | 128x64"
     # and a brand new process (second run, same settings file) sees the same list
     r2 = run(env, "dump\n")
     assert [x.split(" | ")[:3] for x in rows_of(blocks(r2.stdout)[0])] == [x.split(" | ")[:3] for x in rows_of(back)]
+
+
+def order_of(block: list[str]) -> list[str]:
+    """File names of the digest rows, in display order."""
+    return [x.strip().split(" | ")[0].split(os.sep)[-1] for x in rows_of(block)]
+
+
+def test_sort_default_is_file_name_natural_case_insensitive(env):
+    nat = env["dir"] / "nat"
+    nat.mkdir()
+    for n in ("tex10.png", "Tex1.png", "tex2.png"):
+        Image.new("RGBA", (16, 16)).save(nat / n)
+    r = run(env, f"drop {nat / 'tex10.png'} {nat / 'Tex1.png'} {nat / 'tex2.png'}\ndump\n")
+    assert r.returncode == 0, r.stderr
+    (d,) = blocks(r.stdout)
+    assert order_of(d) == ["Tex1.png", "tex2.png", "tex10.png"] and "sort: File asc" in d
+
+
+def test_sort_every_column_both_directions(env):
+    tex, more = env["tex"], env["more"]
+    files = [tex / "a.png", tex / "b.png", tex / "odd.png", more / "c.png", more / "sp ace.png"]
+    caps = {"a.png": "256", "b.png": "512", "odd.png": "off", "c.png": "1024", "sp ace.png": "2048"}
+    setup = "drop " + " ".join(f'"{f}"' for f in files) + "\n"
+    setup += "".join(f'maxsize "{f}" {caps[f.name]}\n' for f in files)
+    setup += f'toggle "{tex / "a.png"}"\ntoggle "{more / "c.png"}"\n'
+    cmds = ["sort file asc", "sort file desc", "sort folder asc", "sort folder desc", "sort size asc", "sort size desc",
+            "sort max size asc", "sort max size desc", "sort auto watch asc", "sort auto watch desc",
+            "sort status asc", "sort status desc"]  # fmt: skip
+    r = run(env, with_tool(env, setup + "".join(f"{c}\ndump\n" for c in cmds)))
+    assert r.returncode == 0, r.stderr
+    got = dict(zip(cmds, blocks(r.stdout), strict=True))
+    want = {
+        "file asc": ["a.png", "b.png", "c.png", "odd.png", "sp ace.png"],
+        "file desc": ["sp ace.png", "odd.png", "c.png", "b.png", "a.png"],
+        "folder asc": ["c.png", "sp ace.png", "a.png", "b.png", "odd.png"],  # "more tex" before "tex"
+        "folder desc": ["a.png", "b.png", "odd.png", "c.png", "sp ace.png"],  # ties by name stay ascending
+        "size asc": ["sp ace.png", "c.png", "odd.png", "a.png", "b.png"],
+        "size desc": ["b.png", "a.png", "odd.png", "c.png", "sp ace.png"],
+        "max size asc": ["a.png", "b.png", "c.png", "sp ace.png", "odd.png"],  # Off counts as largest
+        "max size desc": ["odd.png", "sp ace.png", "c.png", "b.png", "a.png"],
+        "auto watch asc": ["b.png", "odd.png", "sp ace.png", "a.png", "c.png"],  # Off before On
+        "auto watch desc": ["a.png", "c.png", "b.png", "odd.png", "sp ace.png"],
+        "status asc": ["odd.png", "a.png", "b.png", "c.png", "sp ace.png"],  # flagged (60x40 is not a power of 2)
+        "status desc": ["a.png", "b.png", "c.png", "sp ace.png", "odd.png"],
+    }  # fmt: skip
+    for cmd, block in got.items():
+        col, _, way = cmd.removeprefix("sort ").rpartition(" ")
+        assert order_of(block) == want[cmd[5:]], cmd
+        assert f"sort: {col} {way}" in "\n".join(block).lower()  # the dump names the active sort
+
+
+def test_sort_status_change_mid_run_does_not_reorder(env):
+    tex = env["tex"]
+    r = run(
+        env,
+        with_tool(
+            env,
+            f"drop {tex / 'a.png'} {tex / 'badcopy.png'}\nsort status asc\ndump\nconvertall\ndump\n"
+            "sort status asc\ndump\n",
+        ),
+    )
+    assert r.returncode == 0, r.stderr
+    before, after, resorted = blocks(r.stdout)
+    assert order_of(before) == ["a.png", "badcopy.png"]  # both need converting: name order
+    assert order_of(after) == ["a.png", "badcopy.png"]  # a is up to date, badcopy an error: nothing moved
+    assert "error" in row(after, "badcopy.png") and "up_to_date" in row(after, "a.png")
+    assert order_of(resorted) == ["badcopy.png", "a.png"]  # the next header click applies the order
+
+
+def test_sort_is_remembered_across_restart_and_in_settings(env):
+    tex = env["tex"]
+    r = run(env, f"drop {tex / 'a.png'} {tex / 'b.png'}\nsort size desc\nrestart\ndump\n")
+    assert r.returncode == 0, r.stderr
+    (d,) = blocks(r.stdout)
+    assert "sort: Size desc" in d and order_of(d) == ["b.png", "a.png"]
+    assert json.loads(env["settings"].read_text(encoding="utf-8"))["sort"] == {"column": "size", "descending": True}
+
+
+def test_sort_unknown_column_exits_2(env):
+    r = run(env, "sort nonsense\n")
+    assert r.returncode == 2 and "unknown column" in r.stderr
 
 
 def test_criterion6_a_0_1_0_settings_file_loads(env):
@@ -275,9 +357,9 @@ def test_real_tool_two_rows_same_size_own_caps(env):
     assert r.returncode == 0, r.stderr
     done, g, rk, stale, fresh, g2 = blocks(r.stdout)
     assert g == [f"paa {tex / 'grass_co.png'}: 512x256"] and rk == [f"paa {tex / 'rock_co.png'}: 256x128"]
-    assert row(done, "grass_co.png") == "grass_co.png | max=off ▾ | bake=☐ off | up_to_date | 512x256 | made_by=bohemia"
+    assert row(done, "grass_co.png") == "grass_co.png | max=off ▾ | auto watch=☐ off | up_to_date | 512x256 | made_by=bohemia"
     assert row(stale, "grass_co.png") == (
-        "grass_co.png | max=256 ▾ | bake=☐ off | needs_converting: PAA is 512x256, max size wants 256x128 | 512x256 | made_by=bohemia"
+        "grass_co.png | max=256 ▾ | auto watch=☐ off | needs_converting: PAA is 512x256, max size wants 256x128 | 512x256 | made_by=bohemia"
     )
     # parsed columns: a status holding an error text (or a path) fails with the whole row shown, not an IndexError
     assert status_of(row(stale, "rock_co.png")) == "up_to_date"

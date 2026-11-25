@@ -164,7 +164,7 @@ def test_max_size_is_per_row_and_validated(tmp_path):
         p.with_suffix(".paa").write_bytes(paa_bytes(512, 256))
     app = make_app(tmp_path)
     app.add_files([wide, other])
-    app.set_max_size([app.rows[0].key], 256)
+    app.set_max_size([by_name(app)["wide.png"].key], 256)  # rows are sorted by name, not in drop order
     rows = by_name(app)
     assert rows["wide.png"].max_size == 256 and rows["other.png"].max_size is None
     assert rows["wide.png"].status == core.NEEDS_CONVERTING
@@ -343,13 +343,13 @@ def test_bad_png_is_a_row_not_a_crash(tmp_path, tree):
 def test_summary_counts_needs_tool_rows(tmp_path):
     from PIL import Image
 
-    big = tmp_path / "big_co.png"
-    Image.new("RGB", (8192, 8192), (9, 9, 9)).save(big)
+    big = tmp_path / "noise_cat.png"  # a noise suffix is ImageToPAA's (a PNG over 4096 is Loki's since #55)
+    Image.new("RGB", (64, 64), (9, 9, 9)).save(big)
     app = make_app(tmp_path, find_tool=no_tool)
     app.set_converter(core.LOKI)
     app.add_files([big])
     app.message = ""
-    assert by_name(app)["big_co.png"].status == core.NEEDS_TOOL
+    assert by_name(app)["noise_cat.png"].status == core.NEEDS_TOOL
     assert "0 need converting" in app.summary() and "1 need Arma 3 Tools" in app.summary()
     app.close()
 
@@ -394,7 +394,7 @@ def test_bake_on_change_converts_at_the_rows_own_cap(tmp_path, monkeypatch):
     wide, plain = make_png(root / "wide.png", (512, 256)), make_png(root / "plain.png", (512, 256))
     app = make_app(tmp_path)
     drop(app, wide, plain)
-    app.set_max_size([app.rows[0].key], 256)  # the closure must read the live cap, no restart
+    app.set_max_size([by_name(app)["wide.png"].key], 256)  # the closure must read the live cap, no restart
     app.set_all(True)
     for p in (wide, plain):
         os.utime(p, ns=(time.time_ns() + 5_000_000_000,) * 2)
@@ -412,10 +412,10 @@ def test_digest_shape(tmp_path, tree):
     app.set_max_size([app.rows[1].key], 512)
     lines = app.digest().splitlines()
     assert lines[0] == "controls: Converter, Convert all, All on, All off, Remove, About"
-    assert lines[1] == "columns: Bake, File, Folder, Size, Max size, Status"
+    assert lines[1] == "columns: Auto watch, File, Folder, Size, Max size, Output size, Status"
     assert "  tool_found: yes" in lines and "  files: 2" in lines
-    assert f"  {tree / 'a.png'} | max=off ▾ | bake=☑ on | needs_converting | 64x64" in lines
-    assert any(ln.startswith(f"  {tree / 'odd.png'} | max=512 ▾ | bake=☐ off | flagged: 60x40") for ln in lines)
+    assert f"  {tree / 'a.png'} | max=off ▾ | auto watch=☑ on | needs_converting | 64x64" in lines
+    assert any(ln.startswith(f"  {tree / 'odd.png'} | max=512 ▾ | auto watch=☐ off | flagged: 60x40") for ln in lines)
     assert not any("folder:" in ln or "subfolders" in ln for ln in lines)
     app.close()
 
@@ -656,4 +656,98 @@ def test_stale_watcher_snapshot_does_not_undo_a_finished_convert(tmp_path, tree,
     app.events.put(("entries", app._gen, [core.PngEntry(a.absolute(), core.NEEDS_CONVERTING, None, (64, 64))], []))
     app.pump()
     assert app.rows[0].status == core.NEEDS_CONVERTING
+    app.close()
+
+
+# --- sorting (#57, decision 49) -----------------------------------------------------------------------------
+
+
+def srow(path, size=(64, 64), cap=None, bake=False, status=core.UP_TO_DATE, busy=False):
+    return app_mod.Row(path.lower(), path, cap, bake, status, None, size, busy=busy)
+
+
+def names(rows):
+    return [r.name for r in rows]
+
+
+def test_sort_file_and_folder_are_natural_and_case_insensitive():
+    rows = [srow("/z/Tex10.png"), srow("/a/tex2.png"), srow("/b/TEX1.png")]
+    assert names(app_mod.sort_rows(rows, "file", False)) == ["TEX1.png", "tex2.png", "Tex10.png"]
+    assert names(app_mod.sort_rows(rows, "file", True)) == ["Tex10.png", "tex2.png", "TEX1.png"]
+    rows = [srow("/d10/a.png"), srow("/D2/a.png")]
+    folders = [r.folder for r in app_mod.sort_rows(rows, "folder", False)]
+    assert [os.path.basename(f) for f in folders] == ["D2", "d10"]
+
+
+def test_sort_size_max_bake_status_and_tie_breaks():
+    # Size: pixel count (three tie at 4096), then width
+    rows = [srow("/x/c.png", (128, 32)), srow("/x/a.png", (64, 64)), srow("/x/b.png", (32, 128)), srow("/x/d.png", (8, 8))]
+    assert names(app_mod.sort_rows(rows, "size", False)) == ["d.png", "b.png", "a.png", "c.png"]
+    assert names(app_mod.sort_rows(rows, "size", True)) == ["c.png", "a.png", "b.png", "d.png"]
+    # Max size: Off counts as largest
+    caps = [srow("/x/a.png", cap=None), srow("/x/b.png", cap=256), srow("/x/c.png", cap=2048)]
+    assert names(app_mod.sort_rows(caps, "max", False)) == ["b.png", "c.png", "a.png"]
+    assert names(app_mod.sort_rows(caps, "max", True)) == ["a.png", "c.png", "b.png"]
+    # Auto watch: Off before On ascending
+    bakes = [srow("/x/a.png", bake=True), srow("/x/b.png"), srow("/x/c.png", bake=True)]
+    assert names(app_mod.sort_rows(bakes, "bake", False)) == ["b.png", "a.png", "c.png"]
+    assert names(app_mod.sort_rows(bakes, "bake", True)) == ["a.png", "c.png", "b.png"]  # ties still by name
+    # Status: problems first, then name
+    st = [
+        srow("/x/1.png"),
+        srow("/x/2.png", status=core.NEEDS_CONVERTING, busy=True),
+        srow("/x/3.png", status=core.IN_USE),
+        srow("/x/4.png", status=core.NEEDS_CONVERTING),
+        srow("/x/5.png", status=core.NEEDS_TOOL),
+        srow("/x/6.png", status=core.FLAGGED),
+        srow("/x/7.png", status=core.MISSING),
+        srow("/x/8.png", status="error"),
+    ]
+    assert names(app_mod.sort_rows(st, "status", False)) == [f"{n}.png" for n in (8, 7, 6, 5, 4, 3, 2, 1)]
+    # same column value in two folders: folder breaks the tie after the name
+    same = [srow("/b/a.png"), srow("/a/a.png")]
+    assert [os.path.basename(r.folder) for r in app_mod.sort_rows(same, "file", False)] == ["a", "b"]
+
+
+def test_default_sort_header_click_and_arrows(tmp_path, tree):
+    app = make_app(tmp_path)
+    app.add_files([tree / "b.png", tree / "odd.png", tree / "a.png", tree / "other" / "c.png"])
+    assert names(app.rows) == ["a.png", "b.png", "c.png", "odd.png"]  # default: File ascending
+    assert app.sort_text() == "File asc"
+    assert [app.header_text(c) for c in ("bake", "file", "size")] == ["Auto watch", "File ▲", "Size"]
+    app.sort_by("file")  # same column again reverses
+    assert names(app.rows) == ["odd.png", "c.png", "b.png", "a.png"] and app.header_text("file") == "File ▼"
+    app.sort_by("Size")  # another column starts ascending
+    assert app.sort_text() == "Size asc" and app.rows[0].name == "odd.png"  # 60x40 is the fewest pixels
+    assert app.header_text("file") == "File" and app.header_text("size") == "Size ▲"
+    app.sort_by("max size", True)
+    assert app.sort_text() == "Max size desc"
+    app.sort_by("nonsense")
+    assert "unknown column" in app.message and app.sort_text() == "Max size desc"
+    app.close()
+
+
+def test_sort_is_applied_on_drop_remove_start_not_on_status_change(tmp_path, tree, monkeypatch):
+    app = make_app(tmp_path)
+    app.add_files([tree / "a.png", tree / "b.png", tree / "odd.png"])
+    app.sort_by("status")  # flagged (odd) first, then the two that need converting
+    first = [r.key for r in app.rows]
+    assert names(app.rows) == ["odd.png", "a.png", "b.png"]
+    monkeypatch.setattr(core, "convert", fake_convert(fail=("b.png",)))
+    app.convert_all()
+    wait_for(app, lambda: not app.converting)
+    assert by_name(app)["a.png"].status == core.UP_TO_DATE and by_name(app)["b.png"].status == "error"
+    assert [r.key for r in app.rows] == first  # statuses changed but no row moved
+    app.sort_by("status", False)  # the header click applies the new statuses
+    assert names(app.rows) == ["b.png", "odd.png", "a.png"]  # error, flagged, up to date
+    app.close()
+
+
+def test_selection_survives_resort(tmp_path, tree):
+    app = make_app(tmp_path)
+    app.add_files([tree / "a.png", tree / "b.png"])
+    key = app.rows[0].key
+    app.selection = [key]
+    app.sort_by("file", True)
+    assert app.selection == [key] and app.rows[-1].key == key
     app.close()

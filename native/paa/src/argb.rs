@@ -28,6 +28,8 @@ const MAX_LEN: usize = 18;
 const CHAIN: usize = 48;
 /// log2 of the hash table size: 2^14 = 16384 buckets, indexed by a hash of 3 bytes.
 const HASH_BITS: u32 = 14;
+/// Chain terminator: no earlier position (positions are stored as `u32`).
+const NO_POS: u32 = u32::MAX;
 
 /// PAA type word of an uncompressed format.
 pub(crate) fn type_word(f: Fmt) -> u16 {
@@ -52,10 +54,16 @@ pub(crate) fn pack(rgba: &[u8], fmt: Fmt) -> Vec<u8> {
             Fmt::Argb1555 => {
                 // 1555 has a single alpha bit: 128 and above is opaque, below is transparent.
                 let a = u16::from(p[3] >= 128);
-                out.extend_from_slice(&((a << 15) | (q(p[0], 31) << 10) | (q(p[1], 31) << 5) | q(p[2], 31)).to_le_bytes());
+                out.extend_from_slice(
+                    &((a << 15) | (q(p[0], 31) << 10) | (q(p[1], 31) << 5) | q(p[2], 31))
+                        .to_le_bytes(),
+                );
             }
             Fmt::Argb4444 => {
-                out.extend_from_slice(&((q(p[3], 15) << 12) | (q(p[0], 15) << 8) | (q(p[1], 15) << 4) | q(p[2], 15)).to_le_bytes());
+                out.extend_from_slice(
+                    &((q(p[3], 15) << 12) | (q(p[0], 15) << 8) | (q(p[1], 15) << 4) | q(p[2], 15))
+                        .to_le_bytes(),
+                );
             }
             Fmt::Ai88 => {
                 // BT.601 luma, weights in thousandths (0.299, 0.587, 0.114); +500 rounds to nearest.
@@ -77,7 +85,12 @@ pub(crate) fn unpack(raw: &[u8], fmt: Fmt) -> Vec<u8> {
     for b in raw.chunks_exact(2) {
         let v = u16::from_le_bytes([b[0], b[1]]);
         match fmt {
-            Fmt::Argb1555 => out.extend_from_slice(&[e5((v >> 10) & 31), e5((v >> 5) & 31), e5(v & 31), if v >> 15 != 0 { 255 } else { 0 }]),
+            Fmt::Argb1555 => out.extend_from_slice(&[
+                e5((v >> 10) & 31),
+                e5((v >> 5) & 31),
+                e5(v & 31),
+                if v >> 15 != 0 { 255 } else { 0 },
+            ]),
             Fmt::Argb4444 => out.extend_from_slice(&[
                 (((v >> 8) & 15) * 17) as u8,
                 (((v >> 4) & 15) * 17) as u8,
@@ -95,7 +108,8 @@ pub(crate) fn unpack(raw: &[u8], fmt: Fmt) -> Vec<u8> {
 fn checksum(raw: &[u8]) -> u32 {
     // Each byte counts as a signed char (-128..=127), sign-extended to 32 bits, as the format's
     // checksum does. The wrapping add matches C integer overflow.
-    raw.iter().fold(0u32, |s, &b| s.wrapping_add(b as i8 as i32 as u32))
+    raw.iter()
+        .fold(0u32, |s, &b| s.wrapping_add(b as i8 as i32 as u32))
 }
 
 /// Hash of the 3 bytes at `d[i..i + 3]`, used to find earlier positions with the same start.
@@ -110,20 +124,24 @@ fn hash3(d: &[u8], i: usize) -> usize {
 ///
 /// Greedy matching, no lazy matching: at each position take the longest match found, else a
 /// literal. `head[h]` is the latest position whose 3 bytes hash to `h`, and `prev[p]` the earlier
-/// position with the same hash, so together they form chains; `usize::MAX` ends a chain. The flag
+/// position with the same hash, so together they form chains; `NO_POS` ends a chain. Positions are
+/// `u32` (a mip is at most 4096 x 4096 x 2 bytes), which takes the 4096 x 4096 ARGB4444 encode
+/// from 411 to 283 MB peak with the same output bytes. The flag
 /// byte is reserved when the first item of its group is written, and its bits are set afterwards
 /// for the literals. Every position inside a match is still inserted, so later matches can point
 /// into it.
 pub(crate) fn lzss_pack(raw: &[u8]) -> Vec<u8> {
     let n = raw.len();
     let mut out = Vec::with_capacity(n + n / 8 + 8);
-    let mut head = vec![usize::MAX; 1 << HASH_BITS];
-    let mut prev = vec![usize::MAX; n];
-    let insert = |head: &mut Vec<usize>, prev: &mut Vec<usize>, i: usize| {
+    // Every position must fit a u32 with `NO_POS` spare; the mips this is called on are far below.
+    debug_assert!(n < NO_POS as usize);
+    let mut head = vec![NO_POS; 1 << HASH_BITS];
+    let mut prev = vec![NO_POS; n];
+    let insert = |head: &mut Vec<u32>, prev: &mut Vec<u32>, i: usize| {
         if i + MIN_LEN <= n {
             let h = hash3(raw, i);
             prev[i] = head[h];
-            head[h] = i;
+            head[h] = i as u32;
         }
     };
     let (mut i, mut flag_at, mut bit) = (0usize, 0usize, 8u32);
@@ -136,9 +154,9 @@ pub(crate) fn lzss_pack(raw: &[u8]) -> Vec<u8> {
         // Longest match at i among the most recent candidates.
         let (mut best_len, mut best_dist) = (0usize, 0usize);
         if i + MIN_LEN <= n {
-            let mut cand = head[hash3(raw, i)];
+            let mut cand = head[hash3(raw, i)] as usize;
             let mut tries = 0;
-            while cand != usize::MAX && i - cand <= MAX_DIST && tries < CHAIN {
+            while cand != NO_POS as usize && i - cand <= MAX_DIST && tries < CHAIN {
                 let max = MAX_LEN.min(n - i);
                 let mut l = 0;
                 while l < max && raw[cand + l] == raw[i + l] {
@@ -147,7 +165,7 @@ pub(crate) fn lzss_pack(raw: &[u8]) -> Vec<u8> {
                 if l > best_len {
                     (best_len, best_dist) = (l, i - cand);
                 }
-                cand = prev[cand];
+                cand = prev[cand] as usize;
                 tries += 1;
             }
         }
@@ -173,20 +191,40 @@ pub(crate) fn lzss_pack(raw: &[u8]) -> Vec<u8> {
 /// Inverse of `lzss_pack`: `want` raw bytes, with the checksum verified.
 pub(crate) fn lzss_unpack(data: &[u8], want: usize) -> Result<Vec<u8>, Error> {
     let bad = |m: &str| Error::Paa(format!("lzss: {m}"));
-    let body = data.len().checked_sub(4).ok_or_else(|| bad("shorter than the checksum"))?;
-    let mut out: Vec<u8> = Vec::with_capacity(want);
+    let body = data
+        .len()
+        .checked_sub(4)
+        .ok_or_else(|| bad("shorter than the checksum"))?;
+    // `want` comes from the file's width and height, so a hostile header can ask for gigabytes. A
+    // stream can produce at most MAX_LEN bytes per 2 stored bytes (one match), or 8 matches per
+    // 17 bytes, so about 9 bytes per stored byte; `len * 18 + 18` is a safe ceiling that a valid
+    // stream never exceeds. The vector still grows if the stream really produces more.
+    let ceiling = data
+        .len()
+        .checked_mul(MAX_LEN)
+        .and_then(|n| n.checked_add(MAX_LEN))
+        .unwrap_or(usize::MAX);
+    let mut out: Vec<u8> = Vec::with_capacity(want.min(ceiling));
     let mut i = 0;
     // Reads are limited to `body` (`i < body`, `i + 1 < body`) so the trailing 4-byte checksum is
     // never taken for data.
     while out.len() < want {
-        let flags = *data.get(i).filter(|_| i < body).ok_or_else(|| bad("truncated"))?;
+        let flags = *data
+            .get(i)
+            .filter(|_| i < body)
+            .ok_or_else(|| bad("truncated"))?;
         i += 1;
         for b in 0..8 {
             if out.len() >= want {
                 break;
             }
             if flags & (1 << b) != 0 {
-                out.push(*data.get(i).filter(|_| i < body).ok_or_else(|| bad("truncated literal"))?);
+                out.push(
+                    *data
+                        .get(i)
+                        .filter(|_| i < body)
+                        .ok_or_else(|| bad("truncated literal"))?,
+                );
                 i += 1;
             } else {
                 let (b0, b1) = match (data.get(i), data.get(i + 1)) {
@@ -203,7 +241,11 @@ pub(crate) fn lzss_unpack(data: &[u8], want: usize) -> Result<Vec<u8>, Error> {
                     // A match reaching before the start of the output reads the initial window,
                     // which is filled with spaces (0x20), as in the original LZSS. A valid
                     // encoder (such as `lzss_pack`) never emits such a match.
-                    let v = if dist <= out.len() { out[out.len() - dist] } else { 0x20 };
+                    let v = if dist <= out.len() {
+                        out[out.len() - dist]
+                    } else {
+                        0x20
+                    };
                     out.push(v);
                 }
             }

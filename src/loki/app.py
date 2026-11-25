@@ -15,6 +15,7 @@ toggles, converter choice and their persistence to settings.py, change detection
 from __future__ import annotations
 
 import queue
+import re
 import threading
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
@@ -22,11 +23,11 @@ from pathlib import Path
 
 from loki import core
 from loki.pool import ConvertPool
-from loki.settings import Settings
+from loki.settings import SORT_COLUMNS, Settings
 from loki.watcher import Watcher
 
 MAX_CHOICES: tuple[int | None, ...] = (None, *core.MAX_SIZES)
-BAKE_HINT = "Bake converts on the next save. Use Convert all for files already changed."
+BAKE_HINT = "Auto watch converts on the next save. Use Convert all for files already changed."
 TOOL_MISSING_HINT = "ImageToPAA.exe not found. Install Arma 3 Tools from Steam, or browse to it."
 CONVERTER_LABELS = {core.LOKI: "Loki converter", core.BOHEMIA: "Bohemia ImageToPAA"}  # dropdown text
 MADE_BY_LABELS = {core.LOKI: "Loki", core.BOHEMIA: "Bohemia"}  # row status suffix
@@ -34,7 +35,14 @@ EMPTY_HINT = "Drag PNG files here"
 # The window's controls and columns, named once so the view and the digest cannot drift apart.
 CONTROLS = ("Converter", "Convert all", "All on", "All off", "Remove", "About")
 DROPDOWN_ARROW = "▾"  # small down triangle
-COLUMNS = ("Bake", "File", "Folder", "Size", "Max size", "Status")
+COLUMNS = ("Auto watch", "File", "Folder", "Size", "Max size", "Output size", "Status")
+SIZE_SIDES: tuple[int, ...] = tuple(1 << n for n in range(13))  # 1 to 4096: the output size dropdown values
+SOURCE = "Source"  # the output size cell and dropdown text for "no output size"
+MAX_REPLACED_HINT = "Max size replaces the output size: output size set to Source."
+SIZE_REPLACED_HINT = "Output size replaces the max size: max size set to Off."
+SORT_ARROWS = {False: " ▲", True: " ▼"}  # appended to the sorted column's header: ascending, descending
+# Status groups in ascending order: problems first (decision 49; Missing sits after errors, it needs the user too).
+STATUS_ORDER = ("error", core.MISSING, core.FLAGGED, core.NEEDS_TOOL, core.NEEDS_CONVERTING, core.IN_USE, "converting")
 
 
 FOLDER_LABEL_CHARS = 40  # Folder column text longer than this loses its start
@@ -60,6 +68,16 @@ class Row:
     detail: str | None = None  # full technical text for the status bar when the row is selected
     busy: bool = False  # queued or running in the conversion pool
     made_by: str | None = None  # core.LOKI / core.BOHEMIA: who wrote this file's .paa last
+    out_size: core.OutputSize | None = None  # None = Source
+
+    @property
+    def out_text(self) -> str:
+        return out_size_label(self.out_size)
+
+    @property
+    def out_cell(self) -> str:
+        """Output size cell text: the arrow says clicking opens the dialog."""
+        return f"{self.out_text} {DROPDOWN_ARROW}"
 
     @property
     def name(self) -> str:
@@ -88,7 +106,7 @@ class Row:
 
     @property
     def bake_cell(self) -> str:
-        """Bake cell text: a checkbox glyph says clicking toggles."""
+        """Auto watch cell text: a checkbox glyph says clicking toggles."""
         return "☑ On" if self.bake else "☐ Off"
 
     @property
@@ -110,8 +128,52 @@ class Row:
         return f"Error: {self.reason}"
 
 
+def natural_key(text: str) -> tuple:
+    """Case-insensitive natural order: digit runs compare as numbers (tex2 before tex10)."""
+    return tuple(
+        (0, int(part), "") if part.isdigit() else (1, 0, part) for part in re.split(r"(\d+)", text.casefold()) if part
+    )
+
+
+def status_group(row: Row) -> int:
+    """Position of the row's status in STATUS_ORDER (up to date, and anything unlisted, is last).
+    A row in the pool shows "Converting..." so it sorts as converting whatever its file status."""
+    state = "converting" if row.busy else row.status
+    return STATUS_ORDER.index(state) if state in STATUS_ORDER else len(STATUS_ORDER)
+
+
+def sort_rows(rows: list[Row], column: str, descending: bool) -> list[Row]:
+    """The rows in display order. Ties fall back to file name, then folder (always ascending), so the
+    order is stable. `column` is one of settings.SORT_COLUMNS."""
+    primary = {
+        "bake": lambda r: r.bake,  # Off before On
+        "file": lambda r: natural_key(r.name),
+        "folder": lambda r: natural_key(r.folder),
+        "size": lambda r: (r.size[0] * r.size[1], r.size[0]) if r.size else (-1, -1),  # pixel count, then width
+        "max": lambda r: float("inf") if r.max_size is None else r.max_size,  # Off counts as largest
+        "outsize": lambda r: float("inf") if r.out_size is None else r.out_size.width * r.out_size.height,  # Source largest
+        "status": lambda r: status_group(r),
+    }[column]
+    ordered = sorted(rows, key=lambda r: (natural_key(r.name), natural_key(r.folder), r.key))  # the tie-break
+    return sorted(ordered, key=primary, reverse=descending)  # stable: reverse keeps the tie order
+
+
 def max_size_label(value: int | None) -> str:
     return "Off" if value is None else str(value)
+
+
+def out_size_label(size: core.OutputSize | None) -> str:
+    """The Output size cell text: Source when off, else "512x256 contain"; alignment and colour only when not the default
+    (and only for fits that pad: stretch has neither)."""
+    if size is None:
+        return SOURCE
+    text = f"{size.width}x{size.height} {size.fit}"
+    if size.fit != "stretch":
+        if size.align != "centre":
+            text += f" {size.align}"
+        if size.colour is not None:
+            text += " #" + "".join(f"{c:02x}" for c in size.colour)
+    return text
 
 
 def parse_max_size(text: str) -> int | None:
@@ -159,8 +221,9 @@ class App:
             core.convert_workers() if workers is None else workers,
             on_result=lambda key, tags, res: self.events.put(("result", gen, key, tags, res)),
         )
+        self._order: list[str] = []  # row keys in display order; only a re-sort changes it (#57)
         self._refresh_tool()
-        self._rebuild_rows()
+        self._rebuild_rows(resort=True)  # the order at start
         self._watcher = Watcher(
             self.settings,
             self._pool.submit,
@@ -211,7 +274,7 @@ class App:
         on = sum(r.bake for r in self.rows)
         gone = f", {missing} missing" if missing else ""
         tool = f", {blocked} need Arma 3 Tools" if blocked else ""
-        return f"{n} png: {need} need converting, {flagged} flagged{gone}, {bad} errors{tool}; bake on for {on}"
+        return f"{n} png: {need} need converting, {flagged} flagged{gone}, {bad} errors{tool}; auto watch on for {on}"
 
     # --- actions (all catch their own exceptions) ----------------------------------------------
 
@@ -244,7 +307,7 @@ class App:
                 f"; skipped {', '.join(skipped)}" if skipped else ""
             )
             self.hint = ""
-            self._rebuild_rows()
+            self._rebuild_rows(resort=True)
             return added
         except Exception as exc:  # noqa: BLE001 -- a drop must never crash the window
             self._fail(exc)
@@ -267,9 +330,41 @@ class App:
                     self._wait_why.pop(k, None)
                 self.selection = [k for k in self.selection if k not in gone]
                 self.message = f"Removed {len(gone)} file{'' if len(gone) == 1 else 's'} from the list"
-                self._rebuild_rows()
+                self._rebuild_rows(resort=True)
         except Exception as exc:  # noqa: BLE001
             self._fail(exc)
+
+    def sort_by(self, column: str, descending: bool | None = None) -> None:
+        """Sort the list by a column (a COLUMNS name, any case, or its id). With no direction, clicking
+        the sorted column again reverses it and any other column starts ascending. The choice is saved."""
+        try:
+            col = self._sort_id(column)
+            current, desc = self.settings.sort
+            if descending is None:
+                descending = (not desc) if col == current else False
+            self.settings.set_sort(col, descending)
+            self.message = ""
+            self._rebuild_rows(resort=True)
+        except Exception as exc:  # noqa: BLE001
+            self._fail(exc)
+
+    @staticmethod
+    def _sort_id(column: str) -> str:
+        text = column.strip().casefold()
+        for name, ident in zip(COLUMNS, SORT_COLUMNS, strict=True):
+            if text in (name.casefold(), ident):
+                return ident
+        raise ValueError(f"unknown column: {column} (one of {', '.join(COLUMNS)})")
+
+    def header_text(self, column: str) -> str:
+        """A column's header text: its name, plus an arrow when it is the sorted column."""
+        name = COLUMNS[SORT_COLUMNS.index(column)]
+        col, desc = self.settings.sort
+        return name + SORT_ARROWS[desc] if col == column else name
+
+    def sort_text(self) -> str:
+        col, desc = self.settings.sort
+        return f"{COLUMNS[SORT_COLUMNS.index(col)]} {'desc' if desc else 'asc'}"
 
     def set_max_size(self, keys: Iterable[str], value: int | None) -> None:
         """Set the cap of the given rows only; their status is re-evaluated against it (D10)."""
@@ -277,11 +372,29 @@ class App:
             if value not in MAX_CHOICES:
                 raise ValueError(f"unsupported max size: {value}")
             keys = {r.key for r in self.rows} & set(keys)
+            replaced = value is not None and any(r.out_size for r in self.rows if r.key in keys)
             self.settings.set_max_size(keys, value)
-            self.message = ""
+            self.message = MAX_REPLACED_HINT if replaced else ""
             self._rebuild_rows(recheck=keys)
         except Exception as exc:  # noqa: BLE001
             self._fail(exc)
+
+    def set_output_size(self, keys: Iterable[str], size: core.OutputSize | None) -> None:
+        """Set the output size of the given rows (None = Source); a size clears their max size (one hint says so).
+        The same OutputSize and validation as the command line: build it with `core.output_size`."""
+        try:
+            keys = {r.key for r in self.rows} & set(keys)
+            replaced = size is not None and any(r.max_size is not None for r in self.rows if r.key in keys)
+            self.settings.set_size(keys, size)
+            self.message = SIZE_REPLACED_HINT if replaced else ""
+            self._rebuild_rows(recheck=keys)
+        except Exception as exc:  # noqa: BLE001
+            self._fail(exc)
+
+    def selected_output_size(self, keys: Iterable[str]) -> core.OutputSize | None:
+        """The size the dialog starts from: that of the first of the given rows (None = Source)."""
+        want = list(keys)
+        return next((r.out_size for r in self.rows if r.key in want), None)
 
     def set_converter(self, value: str) -> None:
         """Choose the converter (persisted). Statuses never change: they come from each .paa header."""
@@ -388,6 +501,23 @@ class App:
     def idle(self) -> bool:
         return not self.converting and self.events.empty() and self._pool.idle()
 
+    def pending(self) -> list[str]:
+        """What keeps the app from being quiet: a changed-but-unsettled file, a running or queued
+        conversion, or an unapplied worker event. Empty = quiet (scenarios and tests wait on this)."""
+        out = [f"unsettled file {k}" for k in self._watcher.unsettled()]
+        if self.converting:
+            out.append("a convert-all run")
+        busy = self._pool.busy_keys()
+        if busy or not self._pool.idle():
+            out.append("conversions queued or running" + (f" ({len(busy)})" if busy else ""))
+        if not self.events.empty():
+            out.append("unapplied worker events")
+        return out
+
+    def quiet(self) -> bool:
+        """True when `pending()` is empty (unlike `idle()`, a watcher save still settling counts)."""
+        return not self.pending()
+
     def watching(self) -> bool:
         """True once the watcher has baselined every listed file (a save after this is a real save)."""
         return all(self._watcher.is_baselined(f.key) for f in self.settings.files())
@@ -413,7 +543,10 @@ class App:
             converter = self.settings.converter
             if converter == core.BOHEMIA and tool is None:
                 return core.ConvertResult(png, png.with_suffix(".paa"), False, TOOL_MISSING_HINT)
-            return core.convert(png, tool, max_size, converter)
+            key = core.file_key(png)  # the row's output size is read now, so a change applies to the next run
+            f = next((f for f in self.settings.files() if f.key == key), None)
+            extra = {"size": f.size} if f and f.size else {}  # only when set: a plain run is the 0.3.0 call
+            return core.convert(png, tool, max_size, converter, **extra)
 
         return convert
 
@@ -447,7 +580,7 @@ class App:
             self.settings.set_made_by(key, res.converter)
         f = next((f for f in self.settings.files() if f.key == key), None)
         if f:
-            self.entries[key] = core.check_png(f.path, f.max_size)
+            self.entries[key] = core.check_png(f.path, f.max_size, f.size)
             if res.retry and "bake" in tags:  # the watcher submits it again once readable
                 self._watcher.retry(key, core.file_sig(Path(f.path)), self._wait_why.get(key, "file in use"))
         if "all" in tags and key in self._all_pending:  # a bake result never ends the run's job
@@ -474,13 +607,13 @@ class App:
         return True
 
     def _apply_entries(self, entries: list[core.PngEntry], results: list[core.ConvertResult]) -> None:
-        caps = {f.key: f.max_size for f in self.settings.files()}
+        caps = {f.key: (f.max_size, f.size) for f in self.settings.files()}
         for e in entries:
             key = core.file_key(e.path)
             if e.status == core.NEEDS_CONVERTING and key in caps:
                 # The watcher read this before a convert replaced the .paa (or while it was briefly
                 # held): applied as is it would undo the fresher result, so look again now.
-                e = core.check_png(e.path, caps[key])
+                e = core.check_png(e.path, *caps[key])
             self.entries[key] = e
         for res in results:
             self._note_result(res)
@@ -504,17 +637,19 @@ class App:
             self._wait_why.pop(key, None)
         return bool(stale or gone)
 
-    def _needs_tool(self, path: str, entry: core.PngEntry) -> bool:
+    def _needs_tool(self, path: str) -> bool:
         """True when the Loki converter is selected and this file can only be done by an absent ImageToPAA.
         (With Bohemia selected a missing tool is the banner's business, not a per-row state.)"""
         return (
             self.converter == core.LOKI
-            and core.route(path, entry.size, core.LOKI, self.tool_found) == core.NEEDS_TOOL
+            and core.route(path, core.LOKI, self.tool_found) == core.NEEDS_TOOL
         )
 
-    def _rebuild_rows(self, recheck: Iterable[str] = ()) -> None:
-        """Rows follow the settings list (order, caps, toggles). A file with no status yet, or one
-        whose cap just changed (`recheck`), is checked here so a new row never waits for the watcher."""
+    def _rebuild_rows(self, recheck: Iterable[str] = (), resort: bool = False) -> None:
+        """Rows follow the settings list (caps, toggles). A file with no status yet, or one
+        whose cap just changed (`recheck`), is checked here so a new row never waits for the watcher.
+        Order: only `resort` (start, drop, removal, header click) applies the sort; every other rebuild
+        (status changes, toggles) keeps the rows where they are so nothing jumps while the user works."""
         recheck = set(recheck)
         files = self.settings.files()
         listed = {f.key for f in files}
@@ -524,7 +659,7 @@ class App:
         rows = []
         for f in files:
             if f.key not in self.entries or f.key in recheck:
-                self.entries[f.key] = core.check_png(f.path, f.max_size)
+                self.entries[f.key] = core.check_png(f.path, f.max_size, f.size)
             e = self.entries[f.key]
             err = self._errors.get(f.key)
             if f.key in self._waiting and e.status == core.NEEDS_CONVERTING:
@@ -533,12 +668,18 @@ class App:
                 status, reason = ("error", err[1]) if f.key not in self._needs_tool_keys else (core.NEEDS_TOOL, err[1])
             else:
                 status, reason = e.status, e.reason
-                if status == core.NEEDS_CONVERTING and self._needs_tool(f.path, e):
-                    status, reason = core.NEEDS_TOOL, core.needs_tool_reason(f.path, e.size)
+                if status == core.NEEDS_CONVERTING and self._needs_tool(f.path):
+                    status, reason = core.NEEDS_TOOL, core.needs_tool_reason(f.path)
             detail = err[1] if status in ("error", core.NEEDS_TOOL) and err else e.detail
             rows.append(
-                Row(f.key, f.path, f.max_size, f.bake, status, reason, e.size, detail, f.key in busy, f.made_by)
+                Row(f.key, f.path, f.max_size, f.bake, status, reason, e.size, detail, f.key in busy, f.made_by, f.size)
             )
+        if resort or not self._order:
+            rows = sort_rows(rows, *self.settings.sort)
+        else:
+            place = {k: i for i, k in enumerate(self._order)}
+            rows.sort(key=lambda r: place.get(r.key, len(place)))  # stable: unknown keys keep list order, last
+        self._order = [r.key for r in rows]
         self.rows = rows
 
     # --- digest ---------------------------------------------------------------------------------
@@ -549,6 +690,7 @@ class App:
         lines = [
             f"controls: {', '.join(CONTROLS)}",
             f"columns: {', '.join(COLUMNS)}",
+            f"sort: {self.sort_text()}",
             "settings:",
             f"  imagetopaa_path: {s.imagetopaa_path}",
             f"  tool_found: {'yes' if self.tool_found else 'no'}",
@@ -560,7 +702,8 @@ class App:
         for r in self.rows:
             status = r.status + (f": {r.reason}" if r.reason else "")
             made = f" | made_by={r.made_by}" if r.made_by else ""
+            out = f" | output size={r.out_text}" if r.out_size else ""  # shown only when set (Source = absent)
             lines.append(
-                f"  {r.path} | max={r.max_cell.lower()} | bake={r.bake_cell.lower()} | {status} | {r.size_text}{made}"
+                f"  {r.path} | max={r.max_cell.lower()} | auto watch={r.bake_cell.lower()} | {status} | {r.size_text}{made}{out}"
             )
         return "\n".join(lines)

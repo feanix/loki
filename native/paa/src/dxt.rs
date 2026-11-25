@@ -29,16 +29,6 @@ pub enum Format {
     Dxt5,
 }
 
-impl Format {
-    /// Bytes per 4x4 block.
-    pub fn block_bytes(self) -> usize {
-        match self {
-            Format::Dxt1 { .. } => 8,
-            Format::Dxt5 => 16,
-        }
-    }
-}
-
 type Rgb = [i32; 3];
 
 /// Texels with alpha at or above this are opaque for DXT1 punch-through (the midpoint).
@@ -47,8 +37,16 @@ const OPAQUE_ALPHA_MIN: u8 = 128;
 /// Expand a RGB565 endpoint to 8 bits per channel by bit replication (the high
 /// bits are copied into the low bits, so 31 maps to 255 and 0 to 0), the usual way GPUs decode it.
 fn expand(c: u16) -> Rgb {
-    let (r, g, b) = (((c >> 11) & 31) as i32, ((c >> 5) & 63) as i32, (c & 31) as i32);
-    [(r << 3) | (r >> 2), (g << 2) | (g >> 4), (b << 3) | (b >> 2)]
+    let (r, g, b) = (
+        ((c >> 11) & 31) as i32,
+        ((c >> 5) & 63) as i32,
+        (c & 31) as i32,
+    );
+    [
+        (r << 3) | (r >> 2),
+        (g << 2) | (g >> 4),
+        (b << 3) | (b >> 2),
+    ]
 }
 
 /// Round an 8-bit-range colour to the nearest RGB565 value.
@@ -104,7 +102,9 @@ fn assign(px: &[Rgb; 16], opaque: &[bool; 16], pal: &[Rgb; 4], n: usize) -> ([u8
 
 /// Pack sixteen 2-bit indices, texel 0 in the low bits.
 fn pack_idx(idx: &[u8; 16]) -> u32 {
-    idx.iter().enumerate().fold(0u32, |acc, (i, &v)| acc | ((v as u32) << (2 * i)))
+    idx.iter()
+        .enumerate()
+        .fold(0u32, |acc, (i, &v)| acc | ((v as u32) << (2 * i)))
 }
 
 /// Per 8-bit value: best 5-bit and 6-bit endpoint pair when the texel sits at palette index 2.
@@ -124,7 +124,13 @@ fn solid_table() -> &'static SolidTable {
     T.get_or_init(|| {
         let build = |bits: u32| {
             let n = 1i32 << bits;
-            let ex = |v: i32| if bits == 5 { (v << 3) | (v >> 2) } else { (v << 2) | (v >> 4) };
+            let ex = |v: i32| {
+                if bits == 5 {
+                    (v << 3) | (v >> 2)
+                } else {
+                    (v << 2) | (v >> 4)
+                }
+            };
             let mut t = [(0u8, 0u8); 256];
             for v in 0..256i32 {
                 // i32::MAX: any real error beats the starting value.
@@ -142,37 +148,38 @@ fn solid_table() -> &'static SolidTable {
             }
             t
         };
-        SolidTable { t5: build(5), t6: build(6) }
+        SolidTable {
+            t5: build(5),
+            t6: build(6),
+        }
     })
 }
 
-/// Fit a colour block. `opaque[i]` false = transparent texel (only meaningful with `punch`).
+/// Fit a colour block. `opaque[i]` false = transparent texel: only DXT1 punch-through passes any
+/// (other formats pass all true, so alpha never affects their colour fit).
 /// Returns (c0, c1, packed indices).
-fn fit_colour(px: &[Rgb; 16], opaque: &[bool; 16], punch: bool) -> (u16, u16, u32) {
+fn fit_colour(px: &[Rgb; 16], opaque: &[bool; 16]) -> (u16, u16, u32) {
     // Transparent texels need the 3-colour layout (index 3 = transparent); without any, the
     // 4-colour layout is used even for punch-through formats.
-    let mode3 = punch && opaque.iter().any(|&o| !o);
-    // Texels that take part in the fit. Without punch every texel counts, whatever its alpha.
-    let live: Vec<usize> = (0..16).filter(|&i| opaque[i] || !punch).collect();
+    let mode3 = opaque.iter().any(|&o| !o);
+    // Texels that take part in the fit. A block of one repeated colour gets the exact
+    // solid-colour treatment; anything else is fitted along its principal axis and then refined.
+    let live: Vec<usize> = (0..16).filter(|&i| opaque[i]).collect();
     if live.is_empty() {
         // Fully transparent block: c0 == c1 == 0 is the 3-colour layout, all indices 3 (transparent).
         return (0, 0, 0xFFFF_FFFF);
     }
-    // Without punch-through, alpha is ignored for the colour fit, so every texel counts as opaque
-    // (`opq`, unlike `opaque`). A block of one repeated colour gets the exact solid-colour
-    // treatment; anything else is fitted along its principal axis and then refined.
-    let opq: [bool; 16] = if punch { *opaque } else { [true; 16] };
 
     if live.iter().all(|&i| px[i] == px[live[0]]) {
-        return solid_block(px[live[0]], &opq, mode3);
+        return solid_block(px[live[0]], opaque, mode3);
     }
     let (e0, e1) = principal_axis_endpoints(px, &live);
-    refine_endpoints(px, &opq, &live, mode3, e0, e1)
+    refine_endpoints(px, opaque, &live, mode3, e0, e1)
 }
 
 /// Fit a block whose live texels are one colour `c`: either one flat RGB565 value, or (4-colour
 /// layout only) the table pair that hits `c` through index 2, whichever has the smaller error.
-fn solid_block(c: Rgb, opq: &[bool; 16], mode3: bool) -> (u16, u16, u32) {
+fn solid_block(c: Rgb, opaque: &[bool; 16], mode3: bool) -> (u16, u16, u32) {
     let flat = quant(c[0] as f32, c[1] as f32, c[2] as f32);
     // Candidate 1: both endpoints the flat value, texels on index 0 (the 3-colour palette reads
     // the same for c0 == c1, so error is the distance to endpoint 0).
@@ -181,29 +188,31 @@ fn solid_block(c: Rgb, opq: &[bool; 16], mode3: bool) -> (u16, u16, u32) {
     if !mode3 {
         // Candidate 2: table endpoints, texels on index 2.
         let t = solid_table();
-        let (r, g, b) = (t.t5[c[0] as usize], t.t6[c[1] as usize], t.t5[c[2] as usize]);
+        let (r, g, b) = (
+            t.t5[c[0] as usize],
+            t.t6[c[1] as usize],
+            t.t5[c[2] as usize],
+        );
         let pack = |r: u8, g: u8, b: u8| ((r as u16) << 11) | ((g as u16) << 5) | b as u16;
         let (c0, c1) = (pack(r.0, g.0, b.0), pack(r.1, g.1, b.1));
         let pal = palette(c0, c1, false);
         let e = dist2(&c, &pal[2]) as i64;
         if e < best.0 && c0 != c1 {
             // Keep c0 > c1 (4-colour layout): swapping the endpoints turns index 2 into index 3.
-            best = if c0 > c1 { (e, c0, c1, 2) } else { (e, c1, c0, 3) };
+            best = if c0 > c1 {
+                (e, c0, c1, 2)
+            } else {
+                (e, c1, c0, 3)
+            };
         }
     }
     let mut idx = [0u8; 16];
     for (i, v) in idx.iter_mut().enumerate() {
-        *v = if opq[i] { best.3 } else { 3 };
+        *v = if opaque[i] { best.3 } else { 3 };
     }
-    let (c0, c1) = (best.1, best.2);
-    if c0 == c1 {
-        // Safety net: c0 == c1 reads as the 3-colour layout, where only index 0 is the texel
-        // colour. Candidate 1 already uses index 0, so today this loop changes nothing.
-        for (i, v) in idx.iter_mut().enumerate() {
-            *v = if opq[i] { 0 } else { 3 };
-        }
-    }
-    (c0, c1, pack_idx(&idx))
+    // c0 == c1 reads as the 3-colour layout, where only index 0 is the texel colour; candidate 1
+    // (the only one that can have c0 == c1) already puts its texels on index 0.
+    (best.1, best.2, pack_idx(&idx))
 }
 
 /// First endpoint guess for a block with varying colour: the extremes of the live texels
@@ -221,7 +230,11 @@ fn principal_axis_endpoints(px: &[Rgb; 16], live: &[usize]) -> ([f32; 3], [f32; 
     }
     let mut cov = [[0f32; 3]; 3];
     for &i in live {
-        let d = [px[i][0] as f32 - mean[0], px[i][1] as f32 - mean[1], px[i][2] as f32 - mean[2]];
+        let d = [
+            px[i][0] as f32 - mean[0],
+            px[i][1] as f32 - mean[1],
+            px[i][2] as f32 - mean[2],
+        ];
         for a in 0..3 {
             for b in 0..3 {
                 cov[a][b] += d[a] * d[b];
@@ -230,8 +243,14 @@ fn principal_axis_endpoints(px: &[Rgb; 16], live: &[usize]) -> ([f32; 3], [f32; 
     }
     // Seed: the covariance column of the channel with the most variance. The tiny offset keeps
     // the seed from being the zero vector.
-    let diag_max = (0..3).max_by(|&a, &b| cov[a][a].partial_cmp(&cov[b][b]).unwrap()).unwrap();
-    let mut axis = [cov[0][diag_max] + 1e-3, cov[1][diag_max] + 1e-3, cov[2][diag_max] + 1e-3];
+    let diag_max = (0..3)
+        .max_by(|&a, &b| cov[a][a].partial_cmp(&cov[b][b]).unwrap())
+        .unwrap();
+    let mut axis = [
+        cov[0][diag_max] + 1e-3,
+        cov[1][diag_max] + 1e-3,
+        cov[2][diag_max] + 1e-3,
+    ];
     // Six rounds are plenty for a 3x3 matrix with the seed already close to the top eigenvector.
     for _ in 0..6 {
         let v = [
@@ -255,8 +274,16 @@ fn principal_axis_endpoints(px: &[Rgb; 16], live: &[usize]) -> ([f32; 3], [f32; 
         tmax = tmax.max(t);
     }
     (
-        [mean[0] + axis[0] * tmax, mean[1] + axis[1] * tmax, mean[2] + axis[2] * tmax],
-        [mean[0] + axis[0] * tmin, mean[1] + axis[1] * tmin, mean[2] + axis[2] * tmin],
+        [
+            mean[0] + axis[0] * tmax,
+            mean[1] + axis[1] * tmax,
+            mean[2] + axis[2] * tmax,
+        ],
+        [
+            mean[0] + axis[0] * tmin,
+            mean[1] + axis[1] * tmin,
+            mean[2] + axis[2] * tmin,
+        ],
     )
 }
 
@@ -278,7 +305,7 @@ fn solve_endpoints(aa: f32, ab: f32, bb: f32, ra: f32, rb: f32) -> Option<(f32, 
 /// Returns (c0, c1, packed indices); transparent texels always get index 3.
 fn refine_endpoints(
     px: &[Rgb; 16],
-    opq: &[bool; 16],
+    opaque: &[bool; 16],
     live: &[usize],
     mode3: bool,
     mut e0: [f32; 3],
@@ -288,7 +315,11 @@ fn refine_endpoints(
     // Weight of endpoint 0 per palette index (the rest goes to endpoint 1). In the 3-colour layout
     // index 3 is the transparent marker, never a colour, so its 0.0 is never used: those texels
     // are not in `live`, and so not in the fit.
-    let w: [f32; 4] = if mode3 { [1.0, 0.0, 0.5, 0.0] } else { [1.0, 0.0, 2.0 / 3.0, 1.0 / 3.0] };
+    let w: [f32; 4] = if mode3 {
+        [1.0, 0.0, 0.5, 0.0]
+    } else {
+        [1.0, 0.0, 2.0 / 3.0, 1.0 / 3.0]
+    };
 
     // The layout is selected by the endpoint order: 4-colour needs c0 > c1, 3-colour c0 <= c1.
     let order = |a: u16, b: u16| -> (u16, u16) {
@@ -302,11 +333,11 @@ fn refine_endpoints(
         if !mode3 && c0 == c1 {
             // c0 == c1 is read as 3-colour mode: only index 0 is safe.
             let pal = palette(c0, c1, false);
-            let (_, err) = assign(px, opq, &pal, 1);
+            let (_, err) = assign(px, opaque, &pal, 1);
             return ([0u8; 16], err);
         }
         let pal = palette(c0, c1, mode3);
-        assign(px, opq, &pal, n)
+        assign(px, opaque, &pal, n)
     };
 
     let (mut c0, mut c1) = order(quant(e0[0], e0[1], e0[2]), quant(e1[0], e1[1], e1[2]));
@@ -347,13 +378,7 @@ fn refine_endpoints(
             break;
         }
     }
-    let mut idx = best_idx;
-    for (i, v) in idx.iter_mut().enumerate() {
-        if !opq[i] {
-            *v = 3;
-        }
-    }
-    (c0, c1, pack_idx(&idx))
+    (c0, c1, pack_idx(&best_idx))
 }
 
 /// The 8 alpha levels of a DXT5 alpha block. `a0 > a1`: 8 interpolated levels; otherwise 6
@@ -418,7 +443,12 @@ impl AlphaFit {
 fn fit_alpha(a: &[u8; 16]) -> [u8; 8] {
     let (lo, hi) = (*a.iter().min().unwrap(), *a.iter().max().unwrap());
     // i64::MAX: the first candidate always wins.
-    let mut best = AlphaFit { err: i64::MAX, a0: lo, a1: hi, idx: [0; 16] };
+    let mut best = AlphaFit {
+        err: i64::MAX,
+        a0: lo,
+        a1: hi,
+        idx: [0; 16],
+    };
     if lo == hi {
         // Flat alpha: a single endpoint pair reproduces it exactly, no search or refinement needed.
         best.consider(a, lo, hi);
@@ -442,7 +472,16 @@ fn fit_alpha(a: &[u8; 16]) -> [u8; 8] {
             let w: [f32; 8] = if six {
                 [1.0, 0.0, 0.8, 0.6, 0.4, 0.2, -1.0, -1.0]
             } else {
-                [1.0, 0.0, 6.0 / 7.0, 5.0 / 7.0, 4.0 / 7.0, 3.0 / 7.0, 2.0 / 7.0, 1.0 / 7.0]
+                [
+                    1.0,
+                    0.0,
+                    6.0 / 7.0,
+                    5.0 / 7.0,
+                    4.0 / 7.0,
+                    3.0 / 7.0,
+                    2.0 / 7.0,
+                    1.0 / 7.0,
+                ]
             };
             let (mut aa, mut ab, mut bb, mut ra, mut rb) = (0f32, 0f32, 0f32, 0f32, 0f32);
             for (&k, &v) in best.idx.iter().zip(a.iter()) {
@@ -488,13 +527,11 @@ fn fit_alpha(a: &[u8; 16]) -> [u8; 8] {
 }
 
 /// Encode one 4x4 block from 16 RGBA texels (row-major) into `out`, which must be exactly
-/// `fmt.block_bytes()` long.
-pub(crate) fn encode_block(px: &[[u8; 4]; 16], fmt: Format, out: &mut [u8]) {
+/// 8 (DXT1) or 16 (DXT5) bytes long.
+fn encode_block(px: &[[u8; 4]; 16], fmt: Format, out: &mut [u8]) {
     let mut rgb = [[0i32; 3]; 16];
-    let mut opaque = [true; 16];
     for i in 0..16 {
         rgb[i] = [px[i][0] as i32, px[i][1] as i32, px[i][2] as i32];
-        opaque[i] = px[i][3] >= OPAQUE_ALPHA_MIN;
     }
     let (punch, off) = match fmt {
         Format::Dxt1 { punch } => (punch, 0),
@@ -503,6 +540,13 @@ pub(crate) fn encode_block(px: &[[u8; 4]; 16], fmt: Format, out: &mut [u8]) {
         // first, the colour block follows.
         Format::Dxt5 => (false, 8),
     };
+    // Without punch-through, alpha is ignored for the colour fit: every texel counts as opaque.
+    let mut opaque = [true; 16];
+    if punch {
+        for i in 0..16 {
+            opaque[i] = px[i][3] >= OPAQUE_ALPHA_MIN;
+        }
+    }
     if fmt == Format::Dxt5 {
         let mut al = [0u8; 16];
         for i in 0..16 {
@@ -510,16 +554,24 @@ pub(crate) fn encode_block(px: &[[u8; 4]; 16], fmt: Format, out: &mut [u8]) {
         }
         out[..8].copy_from_slice(&fit_alpha(&al));
     }
-    let (c0, c1, idx) = fit_colour(&rgb, &opaque, punch);
+    let (c0, c1, idx) = fit_colour(&rgb, &opaque);
     out[off..off + 2].copy_from_slice(&c0.to_le_bytes());
     out[off + 2..off + 4].copy_from_slice(&c1.to_le_bytes());
     out[off + 4..off + 8].copy_from_slice(&idx.to_le_bytes());
 }
 
 /// Compress a whole RGBA8 image. Preconditions (checked by `encode::encode`): `w` and `h` are
-/// multiples of 4 and at least 4, and `rgba` holds `w * h * 4` bytes.
+/// multiples of 4 and at least 4, and `rgba` holds `w * h * 4` bytes. A side under 4 holds no
+/// whole block, so the result is empty (it never panics on that).
 pub(crate) fn encode_image(rgba: &[u8], w: usize, h: usize, fmt: Format) -> Vec<u8> {
-    let bb = fmt.block_bytes();
+    if w < 4 || h < 4 {
+        return Vec::new();
+    }
+    // Bytes per 4x4 block.
+    let bb = match fmt {
+        Format::Dxt1 { .. } => 8,
+        Format::Dxt5 => 16,
+    };
     let row_bytes = (w / 4) * bb;
     let mut out = vec![0u8; row_bytes * (h / 4)];
     for (by, row) in out.chunks_mut(row_bytes).enumerate() {
@@ -564,16 +616,25 @@ fn decode_colour(b: &[u8], with_alpha_mode: bool) -> [[u8; 4]; 16] {
 pub fn decode_image(data: &[u8], w: usize, h: usize, dxt5: bool) -> Result<Vec<u8>, Error> {
     let bb = if dxt5 { 16 } else { 8 };
     if w == 0 || h == 0 || !w.is_multiple_of(4) || !h.is_multiple_of(4) {
-        return Err(Error::Paa(format!("mip {w}x{h}: sides must be multiples of 4")));
+        return Err(Error::Paa(format!(
+            "mip {w}x{h}: sides must be multiples of 4"
+        )));
     }
     if w.checked_mul(h).map(|n| n / 16 * bb) != Some(data.len()) {
-        return Err(Error::Paa(format!("mip {w}x{h}: data size {} does not match", data.len())));
+        return Err(Error::Paa(format!(
+            "mip {w}x{h}: data size {} does not match",
+            data.len()
+        )));
     }
     let mut out = vec![0u8; w * h * 4];
     for by in 0..h / 4 {
         for bx in 0..w / 4 {
             let blk = &data[(by * (w / 4) + bx) * bb..][..bb];
-            let mut px = if dxt5 { decode_colour(&blk[8..], false) } else { decode_colour(blk, true) };
+            let mut px = if dxt5 {
+                decode_colour(&blk[8..], false)
+            } else {
+                decode_colour(blk, true)
+            };
             if dxt5 {
                 let pal = alpha_levels(blk[0], blk[1]);
                 let mut raw = [0u8; 8];

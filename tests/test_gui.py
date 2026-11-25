@@ -56,7 +56,8 @@ def test_window_lists_rows_and_toggles(tk_root, tmp_path):
     ids = list(win.tree.get_children())
     assert [win.tree.item(i, "values")[1] for i in ids] == ["t00.png", "t01.png", "t02.png"]
     assert win.tree.item(ids[0], "values")[0] == "☐ Off"
-    assert [win.tree.heading(c, "text") for c in win.tree["columns"]] == list(app_mod.COLUMNS)
+    heads = [win.tree.heading(c, "text") for c in win.tree["columns"]]
+    assert heads == [n + (" ▲" if n == "File" else "") for n in app_mod.COLUMNS]  # default sort: File ascending
     values = win.tree.item(ids[0], "values")
     assert values[2] == app_mod.folder_label(str(tmp_path / "tex")) and values[3] == "32x32" and values[4] == "Off ▾"
     win.tree.selection_set(ids[:2])
@@ -201,7 +202,7 @@ def test_ui_stays_responsive_during_convert_all_of_50(tk_root, tmp_path, monkeyp
     assert max(gaps) < 0.5
     assert any(s.startswith("Converting ") for s in status_seen)
     assert win.status_var.get() == "Converted 50 file(s)"
-    assert all(win.tree.item(i, "values")[5] == "Up to date" for i in win.tree.get_children())
+    assert all(win.tree.item(i, "values")[6] == "Up to date" for i in win.tree.get_children())
     app.close()
 
 
@@ -224,6 +225,24 @@ def test_screenshot_renders_the_window_and_posts_a_real_drop(tmp_path):
         assert (
             len(im.convert("RGB").getcolors(maxcolors=1 << 24)) > 200
         )  # client area painted, not just the title bar
+
+
+def test_header_click_sorts_shows_arrow_and_keeps_selection(tk_root, tmp_path):
+    files = pngs(tmp_path / "tex", 3)
+    app, win = make_win(tk_root, tmp_path)
+    app.add_files(files)
+    win._tick()
+    first_iid = win.tree.get_children()[0]
+    win.tree.selection_set(first_iid)
+    win._on_select()
+    win._on_header("file")  # a click on the sorted column reverses it
+    ids = list(win.tree.get_children())
+    assert [win.tree.item(i, "values")[1] for i in ids] == ["t02.png", "t01.png", "t00.png"]
+    assert win.tree.heading("file", "text") == "File ▼"
+    assert win.tree.heading("size", "text") == "Size"  # others show no arrow
+    assert win.tree.selection() == (first_iid,) and ids[-1] == first_iid  # selection follows its row
+    win._on_header("size")
+    assert win.tree.heading("size", "text") == "Size ▲" and win.tree.heading("file", "text") == "File"
 
 
 def test_tk_init_failure_fails_unless_skip_allowed(monkeypatch):

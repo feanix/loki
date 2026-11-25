@@ -72,9 +72,11 @@ def hostile_png(w: int, h: int) -> bytes:
         ("rock_dt.png", True),
         ("rock_smdi.png", True),
         ("rock_as.png", True),
-        ("rock_sky.png", False),
+        ("rock_sky.png", True),  # #31: verified under the relative checks of #49
         ("rock_cat.png", False),
-        ("rock_foo.png", False),
+        ("rock_foo.png", True),  # unknown suffix: the default rule, as ImageToPAA does (#054)
+        ("rock_co2.png", True),
+        ("rock_nohq2.png", True),
         ("rock_co.jpg", False),
     ],
 )
@@ -100,8 +102,8 @@ def test_encode_every_suffix_writes_the_imagetopaa_type(tmp_path, suffix):
     png = make_png(tmp_path / f"t_{suffix}.png", 32)
     _paa.encode(str(png), str(tmp_path / "o.paa"), None)
     assert read_header(tmp_path / "o.paa")[0] == SUFFIX_TYPES[suffix]
-    # Routing: every suffix except `sky` (fails the #025 mip 2 check) is verified and claimed.
-    assert _paa.supported(f"t_{suffix}.png") is (suffix != "sky")
+    # Routing: every suffix of the table is verified and claimed (`sky` joined in #31).
+    assert _paa.supported(f"t_{suffix}.png") is True
 
 
 @pytest.mark.parametrize("suffix", NOISE_SUFFIXES)
@@ -115,10 +117,10 @@ def test_noise_suffixes_are_refused_and_never_routed(tmp_path, suffix):
 
 def test_needs_imagetopaa_is_a_value_error_with_a_short_reason(tmp_path):
     assert issubclass(_paa.NeedsImageToPAA, ValueError)
-    png = make_png(tmp_path / "a_ca.png", 32, alpha=True)
+    png = make_png(tmp_path / "a_cat.png", 32, alpha=True)  # a noise mip filter: the one refusal left (#31)
     with pytest.raises(_paa.NeedsImageToPAA) as exc:
         _paa.encode(str(png), str(tmp_path / "o.paa"), None)
-    assert str(exc.value) == "soft alpha"
+    assert str(exc.value) == "noise mip filter"
 
 
 def test_swizzled_suffix_writes_swiz_tag(tmp_path):
@@ -142,22 +144,21 @@ def test_encode_co_dxt1_and_ca_dxt5(tmp_path):
     assert read_header(tmp_path / "a_ca.paa")[0] == 0xFF05
 
 
-def test_images_imagetopaa_must_encode_are_refused(tmp_path):
-    """DXT1 1-bit alpha masks and the AVGC of soft alpha are not reproduced (#025 part 2): a ValueError
-    that names ImageToPAA, and no output file, so the router falls back."""
-    for name in ("a_co.png", "a_ca.png"):  # soft alpha: DXT1 mask, and AVGC with dynRange 1
+def test_soft_alpha_and_one_bit_alpha_are_encoded_not_refused(tmp_path):
+    """#31 (decision 47): the AVGC of soft alpha is reproduced and the DXT1 1-bit mask is Loki's own cut-out, so no alpha
+    file is handed to ImageToPAA any more: a file, the type and FLAG ImageToPAA writes, and the AVGC alpha of the mean."""
+    for name, ty, flag in (("a_co.png", 0xFF01, 2), ("a_ca.png", 0xFF05, 1), ("b_raw.png", 0x1555, 2)):
         png = make_png(tmp_path / name, 32, alpha=True)  # random alpha: soft
-        with pytest.raises(_paa.NeedsImageToPAA, match="soft alpha|1-bit alpha"):
-            _paa.encode(str(png), str(tmp_path / "o.paa"), None)
-        assert not (tmp_path / "o.paa").exists()
-    raw = make_png(tmp_path / "b_raw.png", 32, alpha=True)  # dynRange 0: soft alpha is reproduced
-    assert _paa.encode(str(raw), str(tmp_path / "raw.paa"), None) is None
-    # binary alpha in a DXT1 class is still the dithered mask: refused
+        out = tmp_path / (name + ".paa")
+        assert _paa.encode(str(png), str(out), None) is None
+        got_ty, _mips, tags = read_header(out)
+        assert got_ty == ty and int.from_bytes(tags["FLAG"], "little") == flag, name
+        assert tags["AVGC"][3] < 255
+    # binary alpha in a DXT1 class: the mask is cut at 128 and the file is written
     co = Image.open(make_png(tmp_path / "c_co.png", 32, alpha=True))
     co.putalpha(co.getchannel("A").point(lambda v: 255 if v >= 128 else 0))
     co.save(tmp_path / "c_co.png")
-    with pytest.raises(_paa.NeedsImageToPAA, match="1-bit alpha"):
-        _paa.encode(str(tmp_path / "c_co.png"), str(tmp_path / "o.paa"), None)
+    assert _paa.encode(str(tmp_path / "c_co.png"), str(tmp_path / "c.paa"), None) is None
 
 
 def test_encode_max_size_halves(tmp_path):

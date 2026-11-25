@@ -6,7 +6,7 @@ dump
 touch demo_data/textures/rock_co.png
 touch demo_data/textures/grass_co.png
 touch demo_data/textures/stone_co.png
-wait 1.5
+idle  # the saved file is converted (not a fixed sleep: slow machines)
 dump
 paainfo demo_data/textures/rock_co.png
 ls demo_data/textures

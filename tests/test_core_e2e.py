@@ -3,7 +3,7 @@
 import pytest
 from PIL import Image
 
-from loki import core
+from loki import core, outputs
 
 pytestmark = pytest.mark.e2e
 
@@ -133,3 +133,20 @@ def test_parallel_convert_all_matches_sequential_conversion_byte_for_byte(tmp_pa
         assert (par / name).with_suffix(".paa").read_bytes() == (seq / name).with_suffix(".paa").read_bytes(), name
     assert core.paa_size(par / "leaf_ca.paa") == (256, 256) and core.paa_size(par / "wall.paa") == (256, 128)
     assert not [p for p in par.iterdir() if p.name.startswith(".loki-tmp")]
+
+
+@needs_tool
+def test_real_handover_with_an_output_size_and_the_paa_reads_back(tmp_path):
+    """#60: ImageToPAA converts the sized copy, and reads back the untouched .paa."""
+    png = tmp_path / "tex.png"
+    Image.new("RGBA", (300, 200), (200, 30, 30, 255)).save(png)
+    size = core.output_size("512x256", "contain", "#00ff00", "top-left")
+    res = core.convert(png, TOOL, None, core.BOHEMIA, size=size)
+    assert res.ok, res.error
+    assert core.paa_size(res.paa) == (512, 256) and outputs.recorded(res.paa) == size.key("tex.png")
+    back = tmp_path / "back.png"
+    assert core._run_tool(TOOL, res.paa, back) is None
+    with Image.open(back) as im:
+        assert im.size == (512, 256)
+        assert im.convert("RGB").getpixel((0, 0))[0] > 150  # the image sits top-left: red there, green fill elsewhere
+        assert im.convert("RGB").getpixel((511, 255))[1] > 150

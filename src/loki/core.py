@@ -3,7 +3,8 @@ or Bohemia's ImageToPAA (decision 17).
 
 Pure functions only: no threads, no global state, no settings reads (see docs/design.md, core.py).
 Rules enforced here:
-  * a PNG whose sides are not powers of two is flagged, never converted or resized;
+  * a PNG whose sides are not powers of two is flagged, never converted or resized, unless an output size
+    (`OutputSize`, #60) is set: then the PNG is fitted to it (Rust `resize.rs`) and the settings are recorded in outputs.json;
   * an optional max-size cap halves oversized sides (aspect kept) into a temp file, the source is untouched;
   * a .paa whose top mip differs from what the file's own max size wants counts as stale;
   * a listed file that is gone is "missing" (it can come back), never an error;
@@ -30,7 +31,7 @@ from pathlib import Path
 
 from PIL import Image, UnidentifiedImageError
 
-from loki import _paa
+from loki import _paa, outputs
 
 MAX_SIZES = (2048, 1024, 512, 256)
 
@@ -46,9 +47,10 @@ LOKI = "loki"
 BOHEMIA = "bohemia"
 CONVERTERS = (LOKI, BOHEMIA)
 NEEDS_TOOL = "needs_tool"  # route result, also the row status of a needs-converting file only ImageToPAA can do
-LOKI_MAX_SIDE = 4096  # the encoder refuses larger PNGs at load (#020, decision 28)
 
-_LOCK_WINERRORS = (32, 33)  # ERROR_SHARING_VIOLATION, ERROR_LOCK_VIOLATION
+# Same wording as the Rust loader's refusal (native/paa/src/img.rs, load_png) minus the size; a test pins both.
+LOAD_LIMIT_ADVICE = "too big to load (at most 16384 on a side and 8192x8192 pixels in all): scale it to 8192 or less in your image editor"
+_LOCK_WINERRORS =(32, 33)  # ERROR_SHARING_VIOLATION, ERROR_LOCK_VIOLATION
 
 _TOOL_REL = Path("steamapps") / "common" / "Arma 3 Tools" / "ImageToPAA" / "ImageToPAA.exe"
 _TOOL_TIMEOUT = 300  # seconds; big textures take a few seconds, a hung tool must not hang the GUI
@@ -144,6 +146,111 @@ def _is_pow2(n: int) -> bool:
     return n > 0 and n & (n - 1) == 0
 
 
+# --- output size (0.3.1, decision 51) ----------------------------------------------------------------
+
+FITS = ("stretch", "contain", "pad")
+ALIGNS = ("centre", "top-left", "top", "top-right", "left", "right", "bottom-left", "bottom", "bottom-right")
+OUTPUT_SIDE_MAX = 4096  # the PAA encoder's own limit (_paa.MAX_DIM)
+
+
+@dataclass(frozen=True)
+class OutputSize:
+    """An output size and how to reach it (--size, --fit, --pad-colour, --pad-align).
+
+    `colour` None means the texture type's default (`_paa.default_pad_colour`). Build one with
+    `output_size` (it validates); the converters take it as `size=`."""
+
+    width: int
+    height: int
+    fit: str = "contain"
+    colour: tuple[int, int, int, int] | None = None
+    align: str = "centre"
+
+    def resolved_colour(self, name: str | Path) -> tuple[int, int, int, int]:
+        """The colour that fills the canvas for a file of this name: the explicit one, else the type's default."""
+        return self.colour if self.colour is not None else _paa.default_pad_colour(str(name))
+
+    def key(self, name: str | Path) -> str:
+        """The settings as recorded in outputs.json (`loki.outputs`) and compared by the up-to-date check. The colour is the
+        resolved one, so a changed class default also counts as a change; stretch has no colour or alignment."""
+        text = f"size={self.width}x{self.height} fit={self.fit}"
+        if self.fit == "stretch":
+            return text
+        colour = "".join(f"{c:02x}" for c in self.resolved_colour(name))
+        return f"{text} colour={colour} align={self.align}"
+
+    def native(self) -> dict:
+        """The keyword arguments of `_paa.encode` and `_paa.fit_png` for this size."""
+        return {"size": (self.width, self.height), "fit": self.fit, "pad_colour": self.colour, "align": self.align}
+
+
+def parse_size(text: str) -> tuple[int, int]:
+    """'WxH' with both sides powers of two from 1 to 4096; ValueError with a plain message otherwise."""
+    m = re.fullmatch(r"\s*(\d+)\s*[xX]\s*(\d+)\s*", text)
+    if not m:
+        raise ValueError(f"size must look like 512x256 (width x height), not '{text}'")
+    w, h = int(m.group(1)), int(m.group(2))
+    for side in (w, h):
+        if not (_is_pow2(side) and side <= OUTPUT_SIDE_MAX):
+            raise ValueError(f"size {w}x{h}: both sides must be powers of two from 1 to {OUTPUT_SIDE_MAX}")
+    return w, h
+
+
+def parse_colour(text: str) -> tuple[int, int, int, int]:
+    """#RRGGBB, #RRGGBBAA or R,G,B,A (0-255 each) -> (r, g, b, a); ValueError with a plain message otherwise."""
+    t = text.strip()
+    bad = ValueError(f"colour must be #RRGGBB, #RRGGBBAA or R,G,B,A (0-255), not '{text}'")
+    if t.startswith("#"):
+        digits = t[1:]
+        if len(digits) not in (6, 8) or not re.fullmatch(r"[0-9a-fA-F]+", digits):
+            raise bad
+        vals = [int(digits[i : i + 2], 16) for i in range(0, len(digits), 2)]
+        return (vals[0], vals[1], vals[2], vals[3] if len(vals) == 4 else 255)  # type: ignore[return-value]
+    parts = t.split(",")
+    if len(parts) != 4 or not all(re.fullmatch(r"\s*\d{1,3}\s*", p) for p in parts):
+        raise bad
+    r, g, b, a = (int(p) for p in parts)
+    if max(r, g, b, a) > 255:
+        raise ValueError(f"colour values must be 0-255, not '{text}'")
+    return (r, g, b, a)
+
+
+def parse_align(text: str) -> str:
+    """One of ALIGNS ('center' is accepted for 'centre'); ValueError listing them otherwise."""
+    t = text.strip().lower()
+    t = "centre" if t == "center" else t
+    if t not in ALIGNS:
+        raise ValueError(f"alignment must be one of {', '.join(ALIGNS)} (or center)")
+    return t
+
+
+def output_size(size: str, fit: str = "contain", colour: str | None = None, align: str = "centre") -> OutputSize:
+    """Validate the four option texts of the command line (and the window) into an OutputSize."""
+    w, h = parse_size(size)
+    if fit not in FITS:
+        raise ValueError(f"fit must be one of {', '.join(FITS)}, not '{fit}'")
+    return OutputSize(w, h, fit, None if colour is None else parse_colour(colour), parse_align(align))
+
+
+def _walk_tags(data: bytes) -> tuple[list[tuple[bytes, int, int]], int] | None:
+    """The tags of a PAA header: ([(on-disk name, data start, data length)], position after the last tag), or
+    None when the header is truncated or runs on. Reads only what `data` holds."""
+    n = len(data)
+    pos = 2  # u16 type tag
+    tags: list[tuple[bytes, int, int]] = []
+    for _ in range(_MAX_TAGGS):
+        if data[pos : pos + 4] != b"GGAT":
+            return tags, pos
+        if pos + 12 > n:
+            return None
+        (length,) = struct.unpack_from("<I", data, pos + 8)
+        tags.append((data[pos + 4 : pos + 8], pos + 12, length))
+        pos += 12 + length
+        if pos > n:
+            return None
+    return None
+
+
 def _nearest_pow2_hint(width: int, height: int) -> str:
     def nearest(n: int) -> int:
         lo = 1 << (n.bit_length() - 1)
@@ -178,18 +285,10 @@ def paa_size(path: str | Path) -> tuple[int, int] | None:
     n = len(data)
     if n < 2:
         return None
-    pos = 2  # u16 type tag
-    for _ in range(_MAX_TAGGS):
-        if data[pos : pos + 4] != b"GGAT":
-            break
-        if pos + 12 > n:
-            return None
-        (length,) = struct.unpack_from("<I", data, pos + 8)
-        pos += 12 + length
-        if pos > n:
-            return None
-    else:
+    found = _walk_tags(data)
+    if found is None:
         return None
+    pos = found[1]
     if pos + 2 > n:
         return None
     (palette,) = struct.unpack_from("<H", data, pos)
@@ -203,12 +302,15 @@ def paa_size(path: str | Path) -> tuple[int, int] | None:
     return width, height
 
 
-def check_png(path: str | Path, max_size: int | None = None) -> PngEntry:
-    """Status of one png. Missing and flagged win; a missing/older/unreadable/wrong-size .paa needs converting."""
+def check_png(path: str | Path, max_size: int | None = None, size: OutputSize | None = None) -> PngEntry:
+    """Status of one png. Missing and flagged win; a missing/older/unreadable/wrong-size .paa needs converting.
+
+    With an output `size` (it replaces max size) any PNG size is fine except a `pad` fit of a larger image, and a
+    .paa is up to date only when it carries the same settings (`OutputSize.key`) at the same size."""
     path = Path(path).absolute()
     try:
         with Image.open(path) as im:  # header only, no full decode
-            size = im.size
+            png_size = im.size
     except FileNotFoundError:
         return PngEntry(path, MISSING, None, None)
     except Exception as exc:  # noqa: BLE001 -- Pillow raises several types for corrupt files
@@ -216,32 +318,46 @@ def check_png(path: str | Path, max_size: int | None = None) -> PngEntry:
         if is_lock_error(exc) and not _acl_denied(exc, path):  # transient: the owner will release it, so it is waiting, not flagged
             return PngEntry(path, IN_USE, "file in use", None, detail)
         # Short, path-free reason for the row; the raw exception stays in `detail`.
-        if isinstance(exc, UnidentifiedImageError) or not isinstance(exc, OSError):
+        if isinstance(exc, Image.DecompressionBombError):  # Pillow's own pixel limit (about 179 million), well over what Loki loads
+            why = LOAD_LIMIT_ADVICE
+        elif isinstance(exc, UnidentifiedImageError) or not isinstance(exc, OSError):
             why = "not a valid PNG"
         elif isinstance(exc, PermissionError):  # here only winerror 5 and the like: not a lock
             why = "access denied"
         else:
             why = "unreadable"
         return PngEntry(path, FLAGGED, f"cannot read: {why}", None, detail)
-    w, h = size
-    if not (_is_pow2(w) and _is_pow2(h)):
-        reason = f"{w}x{h}: sides must be powers of two (e.g. {_nearest_pow2_hint(w, h)})"
-        return PngEntry(path, FLAGGED, reason, size)
+    w, h = png_size
+    if size is None and not (_is_pow2(w) and _is_pow2(h)):
+        reason = f"{w}x{h}: sides must be powers of two (e.g. {_nearest_pow2_hint(w, h)}) or set an output size"
+        return PngEntry(path, FLAGGED, reason, png_size)
+    if size is not None and size.fit == "pad" and (w > size.width or h > size.height):
+        reason = f"{w}x{h} is larger than the output size {size.width}x{size.height}: pad does not resize (use contain or stretch, or a larger size)"
+        return PngEntry(path, FLAGGED, reason, png_size)
     paa = _sibling_paa(path)
     try:
         fresh = paa is not None and paa.stat().st_mtime >= path.stat().st_mtime
     except OSError:
         fresh = False
     if not fresh:
-        return PngEntry(path, NEEDS_CONVERTING, None, size)
+        return PngEntry(path, NEEDS_CONVERTING, None, png_size)
     have = paa_size(paa)
     if have is None:
-        return PngEntry(path, NEEDS_CONVERTING, "PAA unreadable", size)
+        return PngEntry(path, NEEDS_CONVERTING, "PAA unreadable", png_size)
+    if size is not None:
+        if have != (size.width, size.height):
+            reason = f"PAA is {have[0]}x{have[1]}, output size wants {size.width}x{size.height}"
+            return PngEntry(path, NEEDS_CONVERTING, reason, png_size)
+        if outputs.recorded(paa) != size.key(path.name):
+            return PngEntry(path, NEEDS_CONVERTING, "PAA was made with other output size settings", png_size)
+        return PngEntry(path, UP_TO_DATE, None, png_size)
     want = target_size(w, h, max_size)
     if have != want:
         reason = f"PAA is {have[0]}x{have[1]}, max size wants {want[0]}x{want[1]}"
-        return PngEntry(path, NEEDS_CONVERTING, reason, size)
-    return PngEntry(path, UP_TO_DATE, None, size)
+        return PngEntry(path, NEEDS_CONVERTING, reason, png_size)
+    if outputs.recorded(paa) is not None:  # made with an output size: the plain run must not reuse it (same size or not)
+        return PngEntry(path, NEEDS_CONVERTING, "PAA was made with an output size", png_size)
+    return PngEntry(path, UP_TO_DATE, None, png_size)
 
 
 # ImageToPAA's output limit as measured (#029): 8192x8192, 8192x2048, 2048x8192 and 8192x4096 PNGs come out
@@ -356,12 +472,12 @@ def _run_tool(tool: Path, src: Path, dst: Path) -> str | None:
     return None
 
 
-def _run_loki(src: Path, dst: Path, max_size: int | None) -> str | None:
+def _run_loki(src: Path, dst: Path, max_size: int | None, size: OutputSize | None = None) -> str | None:
     """Encode in-process with the native encoder (GIL released, so pool workers run in parallel).
     Bad input comes back as text; an OSError is left to convert()'s handler so a lock is still seen as a lock.
     A per-file refusal (`_paa.NeedsImageToPAA`) is not caught here: convert() falls back to ImageToPAA."""
     try:
-        _paa.encode(str(src), str(dst), max_size)
+        _paa.encode(str(src), str(dst), None if size else max_size, **(size.native() if size else {}))
     except _paa.NeedsImageToPAA:
         raise
     except _paa.MipTooLarge:  # no hand-over: ImageToPAA wraps the 24-bit length field and writes a corrupt file
@@ -398,10 +514,16 @@ def _to_8bit_rgb(im: Image.Image, depth: int) -> Image.Image:
     return im.convert("RGBA" if "A" in im.getbands() or "transparency" in im.info else "RGB")
 
 
-def _imagetopaa_input(png: Path, tdir: Path, max_size: int | None) -> Path:
+def _imagetopaa_input(png: Path, tdir: Path, max_size: int | None, size: OutputSize | None = None) -> Path:
     """The file to hand to ImageToPAA: the PNG itself when it is 8-bit RGB/RGBA (and needs no resize), else
     a copy in `tdir` that is 8-bit RGB/RGBA (ImageToPAA mangles grey, 16-bit and palette PNGs, and ignores tRNS
-    colour keys) and halved to fit `max_size`. The source PNG is never touched; `tdir` is the caller's temp dir."""
+    colour keys) and halved to fit `max_size`. With an output `size` the copy is the Loki encoder's own sized
+    image (`_paa.fit_png`, the same pixels as the Loki route). The source PNG is never touched; `tdir` is the
+    caller's temp dir."""
+    if size is not None:
+        dest = tdir / png.name
+        _paa.fit_png(str(png), str(dest), **size.native())
+        return dest
     kind = _png_depth_type(png)
     with Image.open(png) as im:
         w, h = im.size
@@ -425,23 +547,22 @@ def suffix_of(png: str | Path) -> str:
     return stem[i:].lower() if i > 0 else ""
 
 
-def route(png: str | Path, size: tuple[int, int] | None, converter: str, tool_found: bool) -> str:
+def route(png: str | Path, converter: str, tool_found: bool) -> str:
     """Which converter handles this file: LOKI, BOHEMIA or NEEDS_TOOL (ImageToPAA needed but absent).
 
-    Loki's encoder takes what the Rust lib says it supports (`_paa.supported`) up to 4096 per side
-    (`size` is the PNG header size); everything else goes to ImageToPAA when it is there."""
-    if converter == LOKI and _paa.supported(Path(png).name) and (size is None or max(size) <= LOKI_MAX_SIDE):
+    Loki's encoder takes what the Rust lib says it supports (`_paa.supported`), at any size it can load
+    (a PNG over 4096 is halved to 4096 by the encoder, as ImageToPAA does); everything else goes to
+    ImageToPAA when it is there."""
+    if converter == LOKI and _paa.supported(Path(png).name):
         return LOKI
     return BOHEMIA if tool_found else NEEDS_TOOL
 
 
-def needs_tool_reason(png: str | Path, size: tuple[int, int] | None, converter: str = LOKI) -> str:
+def needs_tool_reason(png: str | Path, converter: str = LOKI) -> str:
     """Row text for a file that route() sent to NEEDS_TOOL."""
     if converter != LOKI:
         return "ImageToPAA.exe not found"
-    if not _paa.supported(Path(png).name):
-        return f"needs Arma 3 Tools for {suffix_of(png)}"
-    return f"over {LOKI_MAX_SIDE}: needs Arma 3 Tools"
+    return f"needs Arma 3 Tools for {suffix_of(png)}"
 
 
 _tmp_counter = itertools.count()
@@ -469,11 +590,17 @@ def _replace_retrying(src: Path, dst: Path) -> None:
 
 
 def convert(
-    png: str | Path, tool: str | Path | None, max_size: int | None = None, converter: str = BOHEMIA
+    png: str | Path,
+    tool: str | Path | None,
+    max_size: int | None = None,
+    converter: str = BOHEMIA,
+    size: OutputSize | None = None,
 ) -> ConvertResult:
     """Convert png -> sibling .paa (overwriting). Failures come back in .error, never raised.
 
-    `converter` is the user's choice; `route` may still send a file to ImageToPAA (`tool`, None when absent)."""
+    `converter` is the user's choice; `route` may still send a file to ImageToPAA (`tool`, None when absent).
+    An output `size` replaces `max_size`; Loki then records the settings in outputs.json for check_png (the .paa itself is
+    never changed after the converter wrote it); a plain run drops the record."""
     png = Path(png)
     paa = png.with_suffix(".paa")
     tool = Path(tool) if tool is not None else None
@@ -483,24 +610,20 @@ def convert(
         out_dir.mkdir()
         with open(png, "rb"):  # probe: a lock surfaces here as a lock, not as an opaque tool failure
             pass
-        size = None
-        if converter == LOKI:
-            with Image.open(png) as im:  # header only: routing needs the size, as check_png reads it
-                size = im.size
-        used = route(png, size, converter, tool is not None)
+        used = route(png, converter, tool is not None)
         if used == NEEDS_TOOL:
-            return ConvertResult(png, paa, False, needs_tool_reason(png, size, converter))
+            return ConvertResult(png, paa, False, needs_tool_reason(png, converter))
         with tempfile.TemporaryDirectory(prefix="loki-") as tdir:
             tmp_paa = out_dir / paa.name
             if used == LOKI:
                 try:
-                    err = _run_loki(png, tmp_paa, max_size)
+                    err = _run_loki(png, tmp_paa, max_size, size)
                 except _paa.NeedsImageToPAA as refusal:  # the encoder decides per file; Python never predicts it
                     if tool is None:
                         return ConvertResult(png, paa, False, f"needs Arma 3 Tools ({refusal})", needs_tool=True)
                     used = BOHEMIA
             if used == BOHEMIA:
-                src = _imagetopaa_input(png, Path(tdir), max_size)
+                src = _imagetopaa_input(png, Path(tdir), max_size, size)
                 err = _run_tool(tool, src, tmp_paa)
             if err is None:
                 try:
@@ -509,6 +632,10 @@ def convert(
                     if _held_open(exc, paa):  # another process has the old .paa open: wait, keep it intact
                         return ConvertResult(png, paa, False, PAA_IN_USE, retry=True)
                     raise
+                if size is not None:
+                    outputs.remember(paa, size.key(png.name))
+                else:
+                    outputs.forget(paa)
         if err is not None:
             return ConvertResult(png, paa, False, err)
         return ConvertResult(png, paa, True, None, converter=used)

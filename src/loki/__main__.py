@@ -2,10 +2,13 @@
 (no Tk) and prints the state digest after each `dump`; `--screenshot` captures the real window offscreen.
 
 Scenario commands, one per line (# comments, blank lines ignored; relative paths resolve against the
-scenario file): drop <path>..., remove <path>, maxsize <path> off|2048|1024|512|256, toggle <path>,
-allon, alloff, convertall, converter loki|bohemia, tool <path>, touch <path>, move <from> <to>, ls <dir>, paainfo <png path>,
-wait <seconds>, restart, about, dump. Quote a path that has spaces. Waits use the real clock and are
-bounded, so a stuck step fails the run instead of hanging it.
+scenario file): drop <path>..., remove <path>, maxsize <path> off|2048|1024|512|256,
+outsize <path> WxH [stretch|contain|pad] [R,G,B,A|default] [align] | outsize <path> off (no #RRGGBB: # starts a comment), toggle <path>,
+sort <column> [asc|desc], allon, alloff, convertall, converter loki|bohemia, tool <path>, touch <path>, move <from> <to>, ls <dir>, paainfo <png path>,
+wait <seconds>, idle [timeout], restart, about, dump. Quote a path that has spaces. Waits use the real clock
+and are bounded, so a stuck step fails the run instead of hanging it. `idle` (default 60 s) pumps until no
+listed file is changed-but-unsettled, no conversion is queued or running and no event is unapplied, then
+fails with what was still pending if the timeout passes; prefer it to `wait` for "the conversion happened".
 """
 
 from __future__ import annotations
@@ -19,23 +22,26 @@ from pathlib import Path
 
 from loki import core
 from loki.about import about_text
-from loki.app import App, parse_max_size
+from loki.app import MAX_REPLACED_HINT, SIZE_REPLACED_HINT, App, parse_max_size
 
 LOAD_TIMEOUT = 15.0
 CONVERT_TIMEOUT = 120.0
 MAX_WAIT = 30.0
+IDLE_TIMEOUT = 60.0  # `idle` default: generous, a loaded machine is slow but a stuck run must still fail
+MAX_IDLE = 300.0
 
 
 class ScenarioError(Exception):
     pass
 
 
-def _pump_until(app: App, done, timeout: float, what: str) -> None:
+def _pump_until(app: App, done, timeout: float, what: str, still=None) -> None:
     deadline = time.monotonic() + timeout
     while not done():
         app.pump()
         if time.monotonic() > deadline:
-            raise ScenarioError(f"timed out waiting for {what}")
+            more = f"; still pending: {still()}" if still else ""
+            raise ScenarioError(f"timed out waiting for {what}{more}")
         time.sleep(0.02)
     app.pump()
 
@@ -80,8 +86,32 @@ def run_scenario(scenario: Path, settings_path: str, out=print, err=sys.stderr) 
                     if not target:
                         raise ScenarioError("maxsize <path> off|2048|1024|512|256")
                     app.set_max_size([core.file_key(path_arg(target))], parse_max_size(value))
+                elif cmd == "outsize":
+                    tokens = shlex.split(arg, posix=False)
+                    if len(tokens) < 2 or len(tokens) > 5:
+                        raise ScenarioError("outsize <path> WxH [fit] [colour|default] [align]  |  outsize <path> off")
+                    key = core.file_key(path_arg(tokens[0]))
+                    if tokens[1].lower() == "off" and len(tokens) == 2:
+                        app.set_output_size([key], None)
+                    else:
+                        fit, colour, align = (tokens[2:] + [None, None, None])[:3]
+                        colour = None if colour in (None, "default", "-") else colour
+                        app.set_output_size([key], core.output_size(tokens[1], fit or "contain", colour, align or "centre"))
+                    if app.message and app.message not in (SIZE_REPLACED_HINT, MAX_REPLACED_HINT):
+                        raise ScenarioError(app.message)
                 elif cmd == "toggle":
                     app.toggle([core.file_key(p) for p in paths_arg(arg)])
+                elif cmd == "sort":
+                    # `sort <column> [asc|desc]`: no direction = a header click (same column reverses)
+                    name, _, way = arg.rpartition(" ")
+                    if way.lower() in ("asc", "desc") and name:
+                        app.sort_by(name, way.lower() == "desc")
+                    elif arg:
+                        app.sort_by(arg)
+                    else:
+                        raise ScenarioError("sort <column> [asc|desc]")
+                    if app.message:  # an unknown column lands in the status message
+                        raise ScenarioError(app.message)
                 elif cmd == "allon":
                     app.set_all(True)
                 elif cmd == "alloff":
@@ -118,6 +148,14 @@ def run_scenario(scenario: Path, settings_path: str, out=print, err=sys.stderr) 
                         app.pump()
                         time.sleep(0.02)
                     app.pump()
+                elif cmd == "idle":
+                    _pump_until(
+                        app,
+                        app.quiet,
+                        min(float(arg), MAX_IDLE) if arg else IDLE_TIMEOUT,
+                        "idle",
+                        lambda a=app: ", ".join(a.pending()),
+                    )
                 elif cmd == "restart":
                     app.close()
                     app = new_app()
@@ -183,12 +221,12 @@ def crash_log_path() -> Path:
 
 CLI_POINTER = (
     "Loki.exe is the windowed program and has no command line. For the command line use Loki-cli.exe "
-    "(same folder): Loki-cli.exe convert <inputs...>"
+    "(same folder): Loki-cli.exe <inputs...>"
 )
 
 
 def _point_to_cli() -> int:
-    """`Loki.exe convert ...` (decision 21): no window; say where the CLI lives on stderr and exit 2.
+    """`Loki.exe convert ...` or `Loki.exe <input>` (decision 21, #62): no window; say where the CLI lives on stderr and exit 2.
 
     The windowed exe has no console of its own, so when stderr is not already redirected it attaches to the
     parent's console (cmd, PowerShell) and writes there."""
@@ -209,7 +247,9 @@ def _point_to_cli() -> int:
 def main(argv: list[str] | None = None) -> int:
     """Run Loki; an unexpected crash is written to crash.log (and shown in a dialog on the GUI path)."""
     first = (sys.argv[1:] if argv is None else argv)[:1]
-    if first == ["convert"]:
+    # `convert` or a bare input (a PNG, folder or pattern, #62) is a CLI call: no window, point to Loki-cli.exe.
+    # Options (--screenshot, --settings, scenario flags) are not.
+    if first and not first[0].startswith("-"):
         return _point_to_cli()
     for stream in (sys.stdout, sys.stderr):  # the digest carries glyphs a cp1252 console cannot print
         if stream is not None and hasattr(stream, "reconfigure"):

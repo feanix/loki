@@ -4,6 +4,6 @@ drop demo_data/textures/stone_co.png demo_data/weapons/rifle_co.png demo_data/no
 dump
 ls demo_data/textures
 drop demo_data/textures/STONE_CO.PNG demo_data/textures/grass_co.png demo_data/weapons/odd_co.png demo_data/weapons/broken_co.png demo_data/textures/ghost.png
-wait 0.6
+idle  # nothing is queued or unsettled: the re-drop changed nothing by itself
 dump
 ls demo_data/textures

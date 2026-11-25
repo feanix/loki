@@ -19,7 +19,7 @@ pub const TYPE_DXT1: u16 = 0xFF01;
 pub const TYPE_DXT5: u16 = 0xFF05;
 
 /// Largest stored mip size: the length field is 24 bits.
-const MAX_MIP_LEN: usize = 0xFF_FFFF;
+pub(crate) const MAX_MIP_LEN: usize = 0xFF_FFFF;
 
 /// One mip level as stored in the file.
 pub struct Mip {
@@ -54,8 +54,10 @@ pub struct Paa {
 /// The on-disk spelling of a 4-byte tag name: the bytes reversed.
 fn rev4(s: &str) -> Result<[u8; 4], Error> {
     match s.as_bytes() {
-        [a, b, c, d] => Ok([*d, *c, *b, *a]),
-        _ => Err(Error::Paa(format!("tag name {s:?} is not 4 bytes"))),
+        // ASCII only: the reader maps each stored byte to one char, so a multi-byte name would not
+        // read back as written.
+        [a, b, c, d] if s.is_ascii() => Ok([*d, *c, *b, *a]),
+        _ => Err(Error::Paa(format!("tag name {s:?} is not 4 ASCII bytes"))),
     }
 }
 
@@ -63,6 +65,13 @@ fn rev4(s: &str) -> Result<[u8; 4], Error> {
 pub fn write(p: &Paa) -> Result<Vec<u8>, Error> {
     if p.mips.len() > 16 {
         return Err(Error::Paa("more than 16 mips".into()));
+    }
+    // OFFS is written below from the real mip positions; a second one from the caller would make
+    // the file ambiguous (the reader keeps the last).
+    if p.tags.iter().any(|t| t.name == "OFFS") {
+        return Err(Error::Paa(
+            "OFFS tag is computed by the writer, not passed in".into(),
+        ));
     }
     // Each tag costs a 12-byte header ("GGAT", name, u32 length) plus its data.
     let tags_len: usize = p.tags.iter().map(|t| 12 + t.data.len()).sum();
@@ -77,10 +86,21 @@ pub fn write(p: &Paa) -> Result<Vec<u8>, Error> {
     for (i, m) in p.mips.iter().enumerate() {
         offsets[i] = u32::try_from(pos).map_err(|_| Error::Paa("file exceeds 4 GiB".into()))?;
         if m.data.len() > MAX_MIP_LEN {
-            return Err(Error::MipTooLarge { w: m.w, h: m.h, len: m.data.len() });
+            return Err(Error::MipTooLarge {
+                w: m.w,
+                h: m.h,
+                len: m.data.len(),
+            });
+        }
+        // A 0x0 entry is the end-of-chain marker, so the reader would stop there and drop the rest.
+        if m.w == 0 && m.h == 0 {
+            return Err(Error::Paa("a 0x0 mip would end the mip chain".into()));
         }
         if m.w > 0x7FFF || m.h > 0xFFFF {
-            return Err(Error::Paa(format!("mip {}x{} does not fit the 16-bit size fields", m.w, m.h)));
+            return Err(Error::Paa(format!(
+                "mip {}x{} does not fit the 16-bit size fields",
+                m.w, m.h
+            )));
         }
         // A mip entry is a 7-byte header (width 2, height 2, length 3) plus its data.
         pos += 7 + m.data.len();
@@ -88,7 +108,8 @@ pub fn write(p: &Paa) -> Result<Vec<u8>, Error> {
     let mut out = Vec::with_capacity(pos + 6);
     out.extend_from_slice(&p.ty.to_le_bytes());
     let put_tag = |out: &mut Vec<u8>, name: &str, data: &[u8]| -> Result<(), Error> {
-        let len = u32::try_from(data.len()).map_err(|_| Error::Paa("tag larger than 4 GiB".into()))?;
+        let len =
+            u32::try_from(data.len()).map_err(|_| Error::Paa("tag larger than 4 GiB".into()))?;
         out.extend_from_slice(b"GGAT");
         out.extend_from_slice(&rev4(name)?);
         out.extend_from_slice(&len.to_le_bytes());
@@ -123,12 +144,16 @@ fn truncated() -> Error {
 
 /// Little-endian u16 at byte offset `o`, or a truncation error.
 fn u16_at(b: &[u8], o: usize) -> Result<u16, Error> {
-    b.get(o..o + 2).map(|s| u16::from_le_bytes([s[0], s[1]])).ok_or_else(truncated)
+    b.get(o..o + 2)
+        .map(|s| u16::from_le_bytes([s[0], s[1]]))
+        .ok_or_else(truncated)
 }
 
 /// Little-endian u32 at byte offset `o`, or a truncation error.
 fn u32_at(b: &[u8], o: usize) -> Result<u32, Error> {
-    b.get(o..o + 4).map(|s| u32::from_le_bytes([s[0], s[1], s[2], s[3]])).ok_or_else(truncated)
+    b.get(o..o + 4)
+        .map(|s| u32::from_le_bytes([s[0], s[1], s[2], s[3]]))
+        .ok_or_else(truncated)
 }
 
 /// Parse a PAA file (the layout `write` produces; palettes are refused).
@@ -140,16 +165,27 @@ pub fn read(b: &[u8]) -> Result<Paa, Error> {
     // Phase 1: tags. Each starts with "GGAT"; the name is stored reversed. OFFS is parsed
     // separately and checked against the real mip positions below.
     while b.get(pos..pos + 4) == Some(b"GGAT") {
-        let nm = b.get(pos + 4..pos + 8).ok_or_else(|| Error::Paa("truncated tag".into()))?;
+        let nm = b
+            .get(pos + 4..pos + 8)
+            .ok_or_else(|| Error::Paa("truncated tag".into()))?;
         let name: String = nm.iter().rev().map(|&c| c as char).collect();
         let len = u32_at(b, pos + 8)? as usize;
-        let data = b.get(pos + 12..pos + 12 + len).ok_or_else(|| Error::Paa("truncated tag data".into()))?.to_vec();
+        let data = b
+            .get(pos + 12..pos + 12 + len)
+            .ok_or_else(|| Error::Paa("truncated tag data".into()))?
+            .to_vec();
         pos += 12 + len;
         if name == "OFFS" {
             if data.len() % 4 != 0 {
-                return Err(Error::Paa(format!("OFFS length {} is not a multiple of 4", data.len())));
+                return Err(Error::Paa(format!(
+                    "OFFS length {} is not a multiple of 4",
+                    data.len()
+                )));
             }
-            offs = data.chunks_exact(4).map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
+            offs = data
+                .chunks_exact(4)
+                .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                .collect();
         } else {
             tags.push(Tag { name, data });
         }
@@ -171,12 +207,24 @@ pub fn read(b: &[u8]) -> Result<Paa, Error> {
         let len = *b.get(pos + 4).ok_or_else(truncated)? as usize
             | (*b.get(pos + 5).ok_or_else(truncated)? as usize) << 8
             | (*b.get(pos + 6).ok_or_else(truncated)? as usize) << 16;
-        let data = b.get(pos + 7..pos + 7 + len).ok_or_else(|| Error::Paa("truncated mip data".into()))?.to_vec();
+        let data = b
+            .get(pos + 7..pos + 7 + len)
+            .ok_or_else(|| Error::Paa("truncated mip data".into()))?
+            .to_vec();
         // OFFS must point exactly at each mip entry; a mismatch means a corrupt or foreign file.
         if offs.get(mips.len()).copied() != Some(pos as u32) {
-            return Err(Error::Paa(format!("OFFS[{}] does not match mip position {}", mips.len(), pos)));
+            return Err(Error::Paa(format!(
+                "OFFS[{}] does not match mip position {}",
+                mips.len(),
+                pos
+            )));
         }
-        mips.push(Mip { w: (w & 0x7FFF) as u32, h: h as u32, lzo: w & 0x8000 != 0, data });
+        mips.push(Mip {
+            w: (w & 0x7FFF) as u32,
+            h: h as u32,
+            lzo: w & 0x8000 != 0,
+            data,
+        });
         pos += 7 + len;
     }
     Ok(Paa { ty, tags, mips })

@@ -10,7 +10,7 @@ use crate::paa;
 use crate::rules::{self, Rule};
 
 /// The rule of a suffix ("" = unsuffixed).
-fn rule(suffix: &str) -> &'static Rule {
+pub(crate) fn rule(suffix: &str) -> &'static Rule {
     if suffix.is_empty() {
         &rules::PLAIN
     } else {
@@ -19,12 +19,16 @@ fn rule(suffix: &str) -> &'static Rule {
 }
 
 /// CRC-32 (PNG chunk checksum), bitwise; only used to build tiny test files.
-fn crc32(data: &[u8]) -> u32 {
+pub(crate) fn crc32(data: &[u8]) -> u32 {
     let mut c = !0u32;
     for &b in data {
         c ^= b as u32;
         for _ in 0..8 {
-            c = if c & 1 != 0 { (c >> 1) ^ 0xEDB8_8320 } else { c >> 1 };
+            c = if c & 1 != 0 {
+                (c >> 1) ^ 0xEDB8_8320
+            } else {
+                c >> 1
+            };
         }
     }
     !c
@@ -32,7 +36,7 @@ fn crc32(data: &[u8]) -> u32 {
 
 /// Append one PNG chunk: big-endian length, name, data, then a CRC-32 over name and data (the
 /// length is not covered).
-fn chunk(out: &mut Vec<u8>, name: &[u8; 4], data: &[u8]) {
+pub(crate) fn chunk(out: &mut Vec<u8>, name: &[u8; 4], data: &[u8]) {
     out.extend_from_slice(&(data.len() as u32).to_be_bytes());
     let mut body = name.to_vec();
     body.extend_from_slice(data);
@@ -41,7 +45,7 @@ fn chunk(out: &mut Vec<u8>, name: &[u8; 4], data: &[u8]) {
 }
 
 /// Header-only PNG (signature, IHDR, junk IDAT, IEND; 68 bytes) declaring `w`x`h` 8-bit RGBA.
-fn header_only_png(w: u32, h: u32) -> Vec<u8> {
+pub(crate) fn header_only_png(w: u32, h: u32) -> Vec<u8> {
     let mut out = b"\x89PNG\r\n\x1a\n".to_vec();
     let mut ihdr = Vec::new();
     ihdr.extend_from_slice(&w.to_be_bytes());
@@ -49,15 +53,20 @@ fn header_only_png(w: u32, h: u32) -> Vec<u8> {
     ihdr.extend_from_slice(&[8, 6, 0, 0, 0]);
     chunk(&mut out, b"IHDR", &ihdr);
     // read_info() stops at the first IDAT, so a short junk body is enough.
-    chunk(&mut out, b"IDAT", &[0x78, 0x9c, 0x63, 0, 0, 0, 1, 0, 1, 0, 0]);
+    chunk(
+        &mut out,
+        b"IDAT",
+        &[0x78, 0x9c, 0x63, 0, 0, 0, 1, 0, 1, 0, 0],
+    );
     chunk(&mut out, b"IEND", &[]);
     out
 }
 
 /// Write `bytes` to a uniquely named temp file, run the PNG loader on it, and return only
 /// success or the error. The file is removed afterwards.
-fn load_from_bytes(name: &str, bytes: &[u8]) -> Result<(), Error> {
-    let path = std::env::temp_dir().join(format!("paa-proto-test-{}-{name}.png", std::process::id()));
+pub(crate) fn load_from_bytes(name: &str, bytes: &[u8]) -> Result<(), Error> {
+    let path =
+        std::env::temp_dir().join(format!("paa-proto-test-{}-{name}.png", std::process::id()));
     std::fs::write(&path, bytes).unwrap();
     let r = img::load_png(&path).map(|_| ());
     let _ = std::fs::remove_file(&path);
@@ -65,13 +74,16 @@ fn load_from_bytes(name: &str, bytes: &[u8]) -> Result<(), Error> {
 }
 
 // The loader must reject by header size alone, before decoding any pixels. 200000x200000 would
-// overflow or exhaust memory; 20000x20000 is a plausible size that is still over the 4096
+// overflow or exhaust memory; 20000x20000 is a plausible size that is still over the 16384
 // per-side limit.
 #[test]
 fn png_header_huge_is_error() {
     let bytes = header_only_png(200_000, 200_000);
     assert_eq!(bytes.len(), 68);
-    assert!(load_from_bytes("huge", &bytes).unwrap_err().to_string().contains("200000x200000"));
+    assert!(load_from_bytes("huge", &bytes)
+        .unwrap_err()
+        .to_string()
+        .contains("200000x200000"));
 }
 
 #[test]
@@ -104,8 +116,10 @@ fn offs_length_not_multiple_of_4_is_error() {
 
 /// Test image of w x h pixels with a repeating colour pattern (so mips differ from a flat
 /// colour) and a constant alpha `a`.
-fn solid(w: usize, h: usize, a: u8) -> Image {
-    let rgba = (0..w * h).flat_map(|i| [(i % 251) as u8, (i % 13) as u8 * 9, 40, a]).collect();
+pub(crate) fn solid(w: usize, h: usize, a: u8) -> Image {
+    let rgba = (0..w * h)
+        .flat_map(|i| [(i % 251) as u8, (i % 13) as u8 * 9, 40, a])
+        .collect();
     Image { w, h, rgba }
 }
 
@@ -137,6 +151,21 @@ fn classify_table() {
     assert_eq!(ok("rock_").class, "(none)");
 }
 
+/// #054: ImageToPAA gave `_foo _xyz _co2 _nrm _caa _cox _nohq2` the unsuffixed output. One owner
+/// (`rules::for_suffix`) says so; classify, supported and encode follow it.
+#[test]
+fn unknown_suffix_is_the_default_rule() {
+    for s in ["foo", "xyz", "co2", "nrm", "caa", "cox", "nohq2", "", "CO2"] {
+        assert_eq!(rules::for_suffix(s).class, "(none)", "{s}");
+        assert_eq!(
+            encode::classify(&format!("rock_{s}")).class,
+            "(none)",
+            "{s}"
+        );
+    }
+    assert_eq!(rules::for_suffix("co").class, "ColorMap");
+}
+
 #[test]
 fn supported_follows_the_verified_rules() {
     for (name, want) in [
@@ -150,20 +179,30 @@ fn supported_follows_the_verified_rules() {
         ("rock_nohq.png", true),
         ("rock_dt.png", true),
         ("rock_smdi.png", true),
-        ("rock_sky.png", false),
+        ("rock_sky.png", true),
         ("rock_cat.png", false),
-        ("rock_foo.png", false),
-        ("rock_.png", false),
+        // Unknown suffixes get the default rule (#054), which ImageToPAA applies too.
+        ("rock_foo.png", true),
+        ("rock_.png", true),
+        ("rock_co2.png", true),
+        ("rock_nohq2.png", true),
         ("rock_co.jpg", false),
     ] {
         assert_eq!(crate::supported(name), want, "{name}");
     }
 }
 
-/// One-row image, one pixel per entry of `a`, constant colour with that alpha.
+/// Image four rows high (a side under 4 px is no DXT image), one pixel per entry of `a` in each row,
+/// constant colour with that alpha.
 fn with_alpha(a: &[u8]) -> Image {
-    let rgba = a.iter().flat_map(|&a| [10, 20, 30, a]).collect();
-    Image { w: a.len(), h: 1, rgba }
+    let rgba = (0..4)
+        .flat_map(|_| a.iter().flat_map(|&a| [10, 20, 30, a]))
+        .collect();
+    Image {
+        w: a.len(),
+        h: 4,
+        rgba,
+    }
 }
 
 // Alpha 240 is the cutoff: a pixel at 240 or more is treated as opaque, anything lower (239)
@@ -179,7 +218,9 @@ fn plan_thresholds() {
     let soft = with_alpha(&[0, 100, 255, 255]);
     let p = |s: &str, i: &Image| {
         let pl = encode::plan(rule(s), i);
-        let Layout::Block(f) = pl.layout else { panic!("pixel layout") };
+        let Layout::Block(f) = pl.layout else {
+            panic!("pixel layout")
+        };
         (f, pl.flag)
     };
     assert_eq!(p("co", &opaque), (Format::Dxt1 { punch: false }, None));
@@ -198,30 +239,57 @@ fn plan_thresholds() {
 // --- limit_size and encode preconditions ------------------------------------------------------
 
 /// Image of the given size with every byte 128 (mid-grey at half alpha); only the size matters.
-fn blank(w: usize, h: usize) -> Image {
-    Image { w, h, rgba: vec![128; w * h * 4] }
+pub(crate) fn blank(w: usize, h: usize) -> Image {
+    Image {
+        w,
+        h,
+        rgba: vec![128; w * h * 4],
+    }
 }
 
 #[test]
 fn limit_size_halves_and_refuses() {
-    let i = encode::limit_size(blank(64, 32), 16).unwrap();
+    let i = encode::limit_size(blank(64, 32), 16, rule("co")).unwrap();
     assert_eq!((i.w, i.h), (16, 8));
-    let i = encode::limit_size(blank(64, 32), 64).unwrap();
+    let i = encode::limit_size(blank(64, 32), 64, rule("co")).unwrap();
     assert_eq!((i.w, i.h), (64, 32));
-    assert!(matches!(encode::limit_size(blank(16, 8), 4), Err(Error::Size(_))));
-    assert!(matches!(encode::limit_size(blank(13, 13), 8), Err(Error::Size(_))));
-    assert!(matches!(encode::limit_size(blank(64, 64), 0), Err(Error::Size(_))));
+    assert!(matches!(
+        encode::limit_size(blank(16, 8), 4, rule("co")),
+        Err(Error::Size(_))
+    ));
+    assert!(matches!(
+        encode::limit_size(blank(13, 13), 8, rule("co")),
+        Err(Error::Size(_))
+    ));
+    assert!(matches!(
+        encode::limit_size(blank(64, 64), 0, rule("co")),
+        Err(Error::Size(_))
+    ));
 }
 
 #[test]
 fn encode_rejects_bad_sizes_without_panic() {
     for (w, h) in [(0, 0), (3, 4), (4, 3), (6, 8), (8192, 4), (4, 8192)] {
-        let img = Image { w, h, rgba: vec![0; (w * h * 4).min(1 << 16)] };
-        assert!(matches!(encode::encode(img, rule("co")), Err(Error::Size(_))), "{w}x{h}");
+        let img = Image {
+            w,
+            h,
+            rgba: vec![0; (w * h * 4).min(1 << 16)],
+        };
+        assert!(
+            matches!(encode::encode(img, rule("co")), Err(Error::Size(_))),
+            "{w}x{h}"
+        );
     }
     // pixel buffer shorter than w*h*4
-    let short = Image { w: 8, h: 8, rgba: vec![0; 100] };
-    assert!(matches!(encode::encode(short, rule("ca")), Err(Error::Size(_))));
+    let short = Image {
+        w: 8,
+        h: 8,
+        rgba: vec![0; 100],
+    };
+    assert!(matches!(
+        encode::encode(short, rule("ca")),
+        Err(Error::Size(_))
+    ));
 }
 
 #[test]
@@ -240,35 +308,97 @@ fn small_paa() -> Vec<u8> {
 fn write_read_round_trip_keeps_tags_and_mips() {
     let p = paa::Paa {
         ty: paa::TYPE_DXT5,
-        tags: vec![paa::Tag { name: "AVGC".into(), data: vec![1, 2, 3, 4] }],
+        tags: vec![paa::Tag {
+            name: "AVGC".into(),
+            data: vec![1, 2, 3, 4],
+        }],
         mips: vec![
-            paa::Mip { w: 8, h: 4, lzo: false, data: vec![7; 32] },
-            paa::Mip { w: 4, h: 4, lzo: true, data: vec![9; 5] },
+            paa::Mip {
+                w: 8,
+                h: 4,
+                lzo: false,
+                data: vec![7; 32],
+            },
+            paa::Mip {
+                w: 4,
+                h: 4,
+                lzo: true,
+                data: vec![9; 5],
+            },
         ],
     };
     let q = paa::read(&paa::write(&p).unwrap()).unwrap();
     assert_eq!(q.ty, paa::TYPE_DXT5);
-    assert_eq!((q.tags[0].name.as_str(), q.tags[0].data.as_slice()), ("AVGC", &[1u8, 2, 3, 4][..]));
+    assert_eq!(
+        (q.tags[0].name.as_str(), q.tags[0].data.as_slice()),
+        ("AVGC", &[1u8, 2, 3, 4][..])
+    );
     assert_eq!(q.mips.len(), 2);
-    assert_eq!((q.mips[0].w, q.mips[0].h, q.mips[0].lzo, q.mips[0].data.len()), (8, 4, false, 32));
-    assert_eq!((q.mips[1].w, q.mips[1].h, q.mips[1].lzo, q.mips[1].data.len()), (4, 4, true, 5));
+    assert_eq!(
+        (
+            q.mips[0].w,
+            q.mips[0].h,
+            q.mips[0].lzo,
+            q.mips[0].data.len()
+        ),
+        (8, 4, false, 32)
+    );
+    assert_eq!(
+        (
+            q.mips[1].w,
+            q.mips[1].h,
+            q.mips[1].lzo,
+            q.mips[1].data.len()
+        ),
+        (4, 4, true, 5)
+    );
 }
 
 #[test]
 fn write_refuses_fields_that_do_not_fit() {
-    let mip = |w: u32, h: u32, n: usize| paa::Mip { w, h, lzo: false, data: vec![0; n] };
-    let one = |m| paa::Paa { ty: paa::TYPE_DXT1, tags: vec![], mips: vec![m] };
+    let mip = |w: u32, h: u32, n: usize| paa::Mip {
+        w,
+        h,
+        lzo: false,
+        data: vec![0; n],
+    };
+    let one = |m| paa::Paa {
+        ty: paa::TYPE_DXT1,
+        tags: vec![],
+        mips: vec![m],
+    };
     // exactly the u24 limit is fine, one over is the typed error
     assert!(paa::write(&one(mip(4, 4, 0xFF_FFFF))).is_ok());
     match paa::write(&one(mip(4096, 4096, 0x100_0000))) {
-        Err(Error::MipTooLarge { w: 4096, h: 4096, len: 0x100_0000 }) => {}
+        Err(Error::MipTooLarge {
+            w: 4096,
+            h: 4096,
+            len: 0x100_0000,
+        }) => {}
         other => panic!("{other:?}"),
     }
-    assert!(matches!(paa::write(&one(mip(0x8000, 4, 1))), Err(Error::Paa(_))));
-    assert!(matches!(paa::write(&one(mip(4, 0x1_0000, 1))), Err(Error::Paa(_))));
-    let many = paa::Paa { ty: paa::TYPE_DXT1, tags: vec![], mips: (0..17).map(|_| mip(4, 4, 1)).collect() };
+    assert!(matches!(
+        paa::write(&one(mip(0x8000, 4, 1))),
+        Err(Error::Paa(_))
+    ));
+    assert!(matches!(
+        paa::write(&one(mip(4, 0x1_0000, 1))),
+        Err(Error::Paa(_))
+    ));
+    let many = paa::Paa {
+        ty: paa::TYPE_DXT1,
+        tags: vec![],
+        mips: (0..17).map(|_| mip(4, 4, 1)).collect(),
+    };
     assert!(matches!(paa::write(&many), Err(Error::Paa(_))));
-    let bad_tag = paa::Paa { ty: paa::TYPE_DXT1, tags: vec![paa::Tag { name: "TOOLONG".into(), data: vec![] }], mips: vec![] };
+    let bad_tag = paa::Paa {
+        ty: paa::TYPE_DXT1,
+        tags: vec![paa::Tag {
+            name: "TOOLONG".into(),
+            data: vec![],
+        }],
+        mips: vec![],
+    };
     assert!(matches!(paa::write(&bad_tag), Err(Error::Paa(_))));
 }
 
@@ -312,7 +442,12 @@ fn dxt_flat_colour_block_decodes_close() {
         let data = encode_image(&rgba, 4, 4, fmt);
         let out = decode_image(&data, 4, 4, fmt == Format::Dxt5).unwrap();
         for p in out.chunks(4) {
-            assert!((p[0] as i32 - 200).abs() <= 3 && (p[1] as i32 - 90).abs() <= 3 && (p[2] as i32 - 30).abs() <= 3, "{p:?}");
+            assert!(
+                (p[0] as i32 - 200).abs() <= 3
+                    && (p[1] as i32 - 90).abs() <= 3
+                    && (p[2] as i32 - 30).abs() <= 3,
+                "{p:?}"
+            );
             assert_eq!(p[3], 255);
         }
     }
@@ -321,7 +456,15 @@ fn dxt_flat_colour_block_decodes_close() {
 #[test]
 fn dxt1_punch_through_keeps_transparent_texels() {
     use crate::dxt::{decode_image, encode_image, Format};
-    let rgba: Vec<u8> = (0..16).flat_map(|i| if i % 2 == 0 { [0, 0, 0, 0] } else { [40, 160, 220, 255] }).collect();
+    let rgba: Vec<u8> = (0..16)
+        .flat_map(|i| {
+            if i % 2 == 0 {
+                [0, 0, 0, 0]
+            } else {
+                [40, 160, 220, 255]
+            }
+        })
+        .collect();
     let data = encode_image(&rgba, 4, 4, Format::Dxt1 { punch: true });
     let out = decode_image(&data, 4, 4, false).unwrap();
     for (i, p) in out.chunks(4).enumerate() {
@@ -332,7 +475,9 @@ fn dxt1_punch_through_keeps_transparent_texels() {
 #[test]
 fn dxt5_alpha_extremes_survive() {
     use crate::dxt::{decode_image, encode_image, Format};
-    let rgba: Vec<u8> = (0..16).flat_map(|i| [10, 10, 10, if i < 8 { 0 } else { 255 }]).collect();
+    let rgba: Vec<u8> = (0..16)
+        .flat_map(|i| [10, 10, 10, if i < 8 { 0 } else { 255 }])
+        .collect();
     let data = encode_image(&rgba, 4, 4, Format::Dxt5);
     let out = decode_image(&data, 4, 4, true).unwrap();
     for (i, p) in out.chunks(4).enumerate() {
@@ -353,8 +498,17 @@ fn decode_image_rejects_bad_geometry() {
 
 // --- PNG variants ------------------------------------------------------------------------------
 
-fn png_with(name: &str, w: u32, h: u32, color: png::ColorType, depth: png::BitDepth, data: &[u8], pal: Option<&[u8]>) -> Image {
-    let path = std::env::temp_dir().join(format!("paa-proto-test-{}-{name}.png", std::process::id()));
+fn png_with(
+    name: &str,
+    w: u32,
+    h: u32,
+    color: png::ColorType,
+    depth: png::BitDepth,
+    data: &[u8],
+    pal: Option<&[u8]>,
+) -> Image {
+    let path =
+        std::env::temp_dir().join(format!("paa-proto-test-{}-{name}.png", std::process::id()));
     {
         let mut enc = png::Encoder::new(std::fs::File::create(&path).unwrap(), w, h);
         enc.set_color(color);
@@ -381,16 +535,34 @@ fn load_png_colour_types_normalise_to_rgba() {
     assert_eq!(i.rgba, [9, 9, 9, 255, 200, 200, 200, 255]);
     let i = png_with("greya", 1, 1, GrayscaleAlpha, Eight, &[9, 77], None);
     assert_eq!(i.rgba, [9, 9, 9, 77]);
-    let i = png_with("idx", 2, 1, Indexed, Eight, &[1, 0], Some(&[10, 11, 12, 20, 21, 22]));
+    let i = png_with(
+        "idx",
+        2,
+        1,
+        Indexed,
+        Eight,
+        &[1, 0],
+        Some(&[10, 11, 12, 20, 21, 22]),
+    );
     assert_eq!(i.rgba, [20, 21, 22, 255, 10, 11, 12, 255]);
     // 16-bit keeps the high byte
-    let i = png_with("rgb16", 1, 1, Rgb, Sixteen, &[0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc], None);
+    let i = png_with(
+        "rgb16",
+        1,
+        1,
+        Rgb,
+        Sixteen,
+        &[0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc],
+        None,
+    );
     assert_eq!(i.rgba, [0x12, 0x56, 0x9a, 255]);
 }
 
 #[test]
 fn load_png_missing_file_is_io_error() {
-    let e = img::load_png(std::path::Path::new("definitely/not/here.png")).err().unwrap();
+    let e = img::load_png(std::path::Path::new("definitely/not/here.png"))
+        .err()
+        .unwrap();
     assert!(matches!(e, Error::Io { .. }));
 }
 
@@ -409,14 +581,26 @@ fn encode_file_reports_unsupported_suffix_and_io() {
     let dir = std::env::temp_dir();
     let e = encode::encode_file(&dir.join("x_cat.png"), &dir.join("x.paa"), None).unwrap_err();
     assert!(matches!(e, Error::Unsupported { .. }), "{e}");
-    let e = encode::encode_file(&dir.join("paa-proto-missing_co.png"), &dir.join("x.paa"), None).unwrap_err();
+    let e = encode::encode_file(
+        &dir.join("paa-proto-missing_co.png"),
+        &dir.join("x.paa"),
+        None,
+    )
+    .unwrap_err();
     assert!(matches!(e, Error::Io { .. }), "{e}");
 }
 
 #[test]
 fn error_text_is_short_and_has_no_debug_syntax() {
-    let e = Error::MipTooLarge { w: 4096, h: 4096, len: 16_777_216 };
+    let e = Error::MipTooLarge {
+        w: 4096,
+        h: 4096,
+        len: 16_777_216,
+    };
     assert!(!e.to_string().contains('{'));
-    let e = Error::io(std::path::Path::new("a.png"), std::io::Error::from(std::io::ErrorKind::NotFound));
+    let e = Error::io(
+        std::path::Path::new("a.png"),
+        std::io::Error::from(std::io::ErrorKind::NotFound),
+    );
     assert!(e.to_string().starts_with("a.png: "));
 }

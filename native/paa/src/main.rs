@@ -29,8 +29,9 @@
 //! Exit codes: 0 ok, 1 the operation failed (bad file, unsupported input, I/O error),
 //! 2 command line misuse (unknown subcommand, missing or extra arguments, bad option value).
 
-use loki_paa::{Error, Image, Mip};
+use loki_paa::{mip_raw, Error, Image};
 use std::borrow::Cow;
+use std::ffi::OsString;
 use std::path::Path;
 use std::process::ExitCode;
 
@@ -47,8 +48,12 @@ fn usage() -> Error {
 /// positional arguments for the caller to count.
 fn take_opt(args: &mut Vec<String>, name: &str) -> Result<Option<usize>, Error> {
     if let Some(i) = args.iter().position(|a| a == name) {
-        let v = args.get(i + 1).ok_or_else(|| Error::Usage(format!("{name} needs a value")))?;
-        let n = v.parse::<usize>().map_err(|e| Error::Usage(format!("{name}: {v}: {e}")))?;
+        let v = args
+            .get(i + 1)
+            .ok_or_else(|| Error::Usage(format!("{name} needs a value")))?;
+        let n = v
+            .parse::<usize>()
+            .map_err(|e| Error::Usage(format!("{name}: {v}: {e}")))?;
         args.drain(i..i + 2);
         return Ok(Some(n));
     }
@@ -64,31 +69,15 @@ fn cmd_encode(mut args: Vec<String>) -> Result<(), Error> {
     }
     let (inp, outp) = (Path::new(&args[0]), Path::new(&args[1]));
     loki_paa::encode_file(inp, outp, max_size)?;
-    let len = std::fs::metadata(outp).map_err(|e| Error::io(outp, e))?.len();
+    let len = std::fs::metadata(outp)
+        .map_err(|e| Error::io(outp, e))?
+        .len();
     println!("{} -> {} ({len} bytes)", inp.display(), outp.display());
     Ok(())
 }
 
-/// Bytes of a DXT mip as raw blocks, decompressing the LZO layer when flagged.
-/// Only for DXT mips: the pixel formats use a different compression (see `is_pixel_type`).
-fn mip_raw(m: &Mip, dxt5: bool) -> Result<Cow<'_, [u8]>, Error> {
-    // Decompressed size. DXT stores 4x4 texel blocks: 8 bytes per block for DXT1 (4 bits per
-    // texel, so w*h/2 bytes) and 16 bytes per block for DXT5 (8 bits per texel, so w*h bytes).
-    // LZO needs the exact output size up front, and it doubles as a corruption check below.
-    let want = m.w as usize * m.h as usize / if dxt5 { 1 } else { 2 };
-    if !m.lzo {
-        return Ok(Cow::Borrowed(&m.data));
-    }
-    let raw = lzokay_native::decompress_all(&m.data, Some(want))
-        .map_err(|e| Error::Lzo(format!("lzo decode {}x{}: {e}", m.w, m.h)))?;
-    if raw.len() != want {
-        return Err(Error::Lzo(format!("lzo decode {}x{}: got {} bytes, expected {want}", m.w, m.h, raw.len())));
-    }
-    Ok(Cow::Owned(raw))
-}
-
 /// True for the uncompressed pixel formats (ARGB1555, ARGB4444, AI88). Their mips are packed
-/// with LZSS, never LZO, so `mip_raw` does not apply: `decode_mip` unpacks the LZSS stream
+/// with LZSS, never LZO, so `loki_paa::mip_raw` does not apply: `decode_mip` unpacks the LZSS stream
 /// itself and the stored bytes are passed to it as they are.
 fn is_pixel_type(ty: u16) -> bool {
     matches!(ty, 0x1555 | 0x4444 | 0x8080)
@@ -116,10 +105,24 @@ fn cmd_decode(mut args: Vec<String>) -> Result<(), Error> {
     }
     let src = Path::new(&args[0]);
     let p = loki_paa::read(&std::fs::read(src).map_err(|e| Error::io(src, e))?)?;
-    let m = p.mips.get(mip).ok_or_else(|| Error::Paa(format!("no mip {mip} (file has {})", p.mips.len())))?;
-    let raw = if is_pixel_type(p.ty) { Cow::Borrowed(m.data.as_slice()) } else { mip_raw(m, p.ty == loki_paa::TYPE_DXT5)? };
+    let m = p
+        .mips
+        .get(mip)
+        .ok_or_else(|| Error::Paa(format!("no mip {mip} (file has {})", p.mips.len())))?;
+    let raw = if is_pixel_type(p.ty) {
+        Cow::Borrowed(m.data.as_slice())
+    } else {
+        mip_raw(m, p.ty == loki_paa::TYPE_DXT5)?
+    };
     let rgba = loki_paa::decode_mip(p.ty, &raw, m.w as usize, m.h as usize)?;
-    loki_paa::save_png(Path::new(&args[1]), &Image { w: m.w as usize, h: m.h as usize, rgba })
+    loki_paa::save_png(
+        Path::new(&args[1]),
+        &Image {
+            w: m.w as usize,
+            h: m.h as usize,
+            rgba,
+        },
+    )
 }
 
 /// `info <in.paa>`: print the type, the tags (as hex) and each mip's size and stored length.
@@ -142,9 +145,17 @@ fn cmd_info(args: Vec<String>) -> Result<(), Error> {
         let raw = if is_pixel_type(p.ty) {
             "lzss".to_string()
         } else {
-            mip_raw(m, dxt5).map(|r| r.len().to_string()).unwrap_or_else(|e| e.to_string())
+            mip_raw(m, dxt5)
+                .map(|r| r.len().to_string())
+                .unwrap_or_else(|e| e.to_string())
         };
-        println!("mip {i} {}x{} lzo={} stored={} raw={raw}", m.w, m.h, m.lzo, m.data.len());
+        println!(
+            "mip {i} {}x{} lzo={} stored={} raw={raw}",
+            m.w,
+            m.h,
+            m.lzo,
+            m.data.len()
+        );
     }
     println!("file size {}", bytes.len());
     Ok(())
@@ -160,11 +171,28 @@ fn cmd_rules(args: Vec<String>) -> Result<(), Error> {
     Ok(())
 }
 
+/// The command line as text. `std::env::args()` panics (exit 101) on an argument that is not valid
+/// Unicode (a lone surrogate on Windows), so read `args_os` and refuse such an argument as a usage
+/// error instead.
+fn text_args(args: impl Iterator<Item = OsString>) -> Result<Vec<String>, Error> {
+    args.map(|a| {
+        a.into_string()
+            .map_err(|a| Error::Usage(format!("argument {a:?} is not valid Unicode")))
+    })
+    .collect()
+}
+
 /// Dispatch on the first argument and map the result to the exit code described at the top
 /// of this file: 0 success, 2 for a usage error or no arguments at all (help text on stderr),
 /// 1 for any other failure. `--help` (also `-h` or `help`) prints the help text and exits 0.
 fn main() -> ExitCode {
-    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    let mut args = match text_args(std::env::args_os().skip(1)) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::from(2);
+        }
+    };
     if args.is_empty() {
         eprintln!("{USAGE}");
         return ExitCode::from(2);
@@ -196,7 +224,24 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::USAGE;
+    use super::{text_args, Error, USAGE};
+    use std::ffi::OsString;
+
+    /// An argument that is not valid Unicode (a lone surrogate on Windows, a bad byte elsewhere)
+    /// is a usage error (exit 2), not a panic (exit 101); valid arguments pass through unchanged.
+    #[test]
+    fn a_non_unicode_argument_is_a_usage_error() {
+        #[cfg(windows)]
+        let bad = std::os::windows::ffi::OsStringExt::from_wide(&[0x61, 0xD800, 0x62]);
+        #[cfg(unix)]
+        let bad = std::os::unix::ffi::OsStringExt::from_vec(vec![0x61, 0xFF, 0x62]);
+        let r = text_args([OsString::from("info"), bad].into_iter());
+        assert!(matches!(r, Err(Error::Usage(_))), "{r:?}");
+        assert_eq!(
+            text_args([OsString::from("info"), OsString::from("a b.paa")].into_iter()).unwrap(),
+            ["info", "a b.paa"]
+        );
+    }
 
     /// `--help` prints USAGE, so every subcommand the dispatcher in `main` accepts must be listed.
     #[test]

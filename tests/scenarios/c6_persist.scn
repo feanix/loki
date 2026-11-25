@@ -7,5 +7,5 @@ move demo_data/textures/rock_co.png demo_data/away/rock_co.png
 restart
 dump
 move demo_data/away/rock_co.png demo_data/textures/rock_co.png
-wait 1
+idle  # the returned file is seen again
 dump

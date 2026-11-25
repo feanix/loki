@@ -1,4 +1,4 @@
-"""Command line (decisions 19, 21, #018): `Loki-cli.exe convert <inputs...>` converts PNGs to PAA and exits.
+"""Command line (decisions 19, 21, #018): `Loki-cli.exe <inputs...>` converts (a leading `convert` is still accepted, #62) PNGs to PAA and exits.
 
 Reuses the GUI's pieces (core.check_png / route / convert, pool.ConvertPool, the watcher's backoff
 schedule) and never reads or writes the GUI's settings or file list. No Tk. One line per file on stdout,
@@ -15,6 +15,7 @@ import glob
 import os
 import queue
 import sys
+import textwrap
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,8 +31,7 @@ KIND_WIDTH = 11
 # Plain-words list of what the built-in converter hands over (README "Known limits"); the suffix names in it
 # are checked against the encoder by tests/test_cli.py, so it cannot drift.
 HANDOVER_CASES = (
-    "some textures with transparency (soft alpha, or cut-out alpha such as hair cards), _sky, _cat, _can, _non, "
-    "unknown suffixes, and PNGs over 4096 on a side"
+    "_cat, _can and _non (they use Bohemia's own noise generator)"
 )
 
 CONVERTED, SKIPPED, FLAGGED, NEEDS_TOOL, ERROR = "converted", "skipped", "flagged", "needs-tool", "error"
@@ -46,35 +46,87 @@ class _Parser(argparse.ArgumentParser):
         raise UsageError(message)
 
 
+# Help text (#59, #62). Shown raw (RawDescriptionHelpFormatter), so line breaks here are the ones printed; keep
+# the screen at 60 lines or fewer at 80 columns (tests/test_cli_help.py). Example lines start with "Loki-cli.exe" and
+# that test runs each through the parser, so add new examples as more lines of the same shape.
+GUIDE_LINE = "Full guide: https://github.com/feanix/loki#command-line"  # README heading "## Command line"
+EXIT_CODE_LINES = (
+    "0  all files converted or up to date",
+    "1  any file flagged, needing Arma 3 Tools, or failed",
+    "2  usage error (bad option, no PNG matched)",
+)
+USAGE = "Loki-cli.exe [options] input [input ...]"
+NO_ARGS_LINE = "Run 'Loki-cli.exe --help' for all options."
+EPILOG = (
+    "Exit codes:\n"
+    + "".join(f"  {line}\n" for line in EXIT_CODE_LINES)
+    + "\n"
+    "Examples:\n"
+    "  In PowerShell, run it from its folder as .\\Loki-cli.exe (or add the\n"
+    "  folder to PATH).\n"
+    "  One file:\n"
+    "    Loki-cli.exe textures\\wall_co.png\n"
+    "  A folder with its subfolders, skipping PAAs that are up to date:\n"
+    "    Loki-cli.exe textures --recursive --skip-up-to-date\n"
+    "  A pattern. Keep the quotes so Loki expands the pattern itself:\n"
+    '    Loki-cli.exe "textures\\*_co.png" --max-size 2048\n'
+    "  A set output size (pad keeps the pixels, fills the rest):\n"
+    "    Loki-cli.exe textures\\door_co.png --size 512x256 --fit pad\n"
+    "  In a script, print only problems, then check the exit code:\n"
+    "    Loki-cli.exe textures --quiet\n"
+    "    if errorlevel 1 echo Some textures need attention            (cmd)\n"
+    '    if ($LASTEXITCODE -ne 0) { "Some textures need attention" }  (PowerShell)\n'
+    "\n"
+    "Default --pad-colour by type: normal maps 128,128,255,255; _as, _ads, _adshq\n"
+    "255,255,255,255; _ca, _lca, _cat, _can, _8888 and other alpha types 0,0,0,0;\n"
+    "everything else 0,0,0,255.\n"
+    "\n"
+    "The word 'convert' before the inputs is optional (0.3.0 scripts still work).\n"
+    "\n" + GUIDE_LINE
+)
+
+
+def _wrap(text: str) -> str:
+    """Wrap a paragraph at 78 columns (raw help formatters do not wrap it themselves)."""
+    return textwrap.fill(text, 78)
+
+
 def _build_parser() -> argparse.ArgumentParser:
-    ap = _Parser(prog="Loki-cli.exe", description="Convert PNG textures to Arma 3 PAA and exit.")
-    ap.add_argument("--version", action="version", version=f"Loki {__version__}")
-    sub = ap.add_subparsers(dest="command", metavar="convert")
-    cv = sub.add_parser(
-        "convert",
-        prog="Loki-cli.exe convert",
-        help="convert PNG files, globs or folders",
-        description="Convert PNGs to PAA beside each PNG. Inputs: PNG files, glob patterns (expanded by Loki), "
-        "folders (their *.png; add --recursive for subfolders). "
-        "The built-in converter does most files. These go to Bohemia's ImageToPAA automatically: "
-        + HANDOVER_CASES + ".",
+    """One parser: converting is the only action, so the options live at the top level (#62)."""
+    ap = _Parser(
+        prog="Loki-cli.exe",
+        usage=USAGE,
+        description=_wrap(
+            "Loki-cli.exe converts PNG textures to Arma 3 PAA files and exits. Each PAA is written beside "
+            "its PNG. Inputs: PNG files, glob patterns (expanded by Loki), folders (their *.png; add "
+            "--recursive for subfolders). The built-in converter does most files. These go to Bohemia's "
+            "ImageToPAA automatically: " + HANDOVER_CASES + "."
+        ),
+        epilog=EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    cv.add_argument("inputs", nargs="+", metavar="input", help="PNG file, glob pattern or folder")
-    cv.add_argument("--max-size", default="off", metavar="off|2048|1024|512|256", help="cap the longest side (default off)")
-    cv.add_argument(
+    ap.add_argument("--version", action="version", version=f"Loki {__version__}")
+    ap.add_argument("inputs", nargs="+", metavar="input", help="PNG file, glob pattern or folder")
+    ap.add_argument("--max-size", metavar="SIZE", help="longest side: off, 2048, 1024, 512, 256 (default off)")
+    ap.add_argument("--size", metavar="WxH", help="output size, powers of two 1-4096 (default: PNG size)")
+    ap.add_argument("--fit", metavar="MODE", help="stretch, contain (default) or pad (no scaling)")
+    ap.add_argument("--pad-colour", metavar="COLOUR", help="#RRGGBB, #RRGGBBAA or R,G,B,A (default: below)")
+    ap.add_argument("--pad-color", dest="pad_colour", help=argparse.SUPPRESS)  # alias; not listed
+    ap.add_argument("--pad-align", metavar="ALIGN", help="centre (default), top, bottom-left etc. (see the guide)")
+    ap.add_argument(
         "--imagetopaa", metavar="PATH",
         help="Path to ImageToPAA.exe. Only needed if Arma 3 Tools is installed somewhere Loki cannot find; "
         "normally Loki finds it through Steam. If a file needs ImageToPAA and it is not found, that file is "
         "reported as 'needs Arma 3 Tools' and the exit code is 1.",
     )  # fmt: skip
-    cv.add_argument("--jobs", type=int, metavar="N", help="parallel conversions (default: by CPU count)")
-    cv.add_argument("--skip-up-to-date", action="store_true", help="do not reconvert a PNG whose PAA is up to date")
-    cv.add_argument("--recursive", action="store_true", help="include subfolders of folder inputs")
-    cv.add_argument(
-        "--wait-locked", type=float, default=DEFAULT_WAIT_LOCKED, metavar="SECONDS",
+    ap.add_argument("--jobs", type=int, metavar="N", help="parallel conversions (default: by CPU count)")
+    ap.add_argument("--skip-up-to-date", action="store_true", help="do not reconvert a PNG whose PAA is up to date")
+    ap.add_argument("--recursive", action="store_true", help="include subfolders of folder inputs")
+    ap.add_argument(
+        "--wait-locked", type=float, default=DEFAULT_WAIT_LOCKED, metavar="SEC",
         help=f"wait this long for a PNG or PAA held open by another program (default {DEFAULT_WAIT_LOCKED:g})",
     )  # fmt: skip
-    cv.add_argument("--quiet", action="store_true", help="print only problems and the summary")
+    ap.add_argument("--quiet", action="store_true", help="print only problems and the summary")
     return ap
 
 
@@ -137,8 +189,8 @@ class _Wait:
 
 
 class _Run:
-    def __init__(self, args: argparse.Namespace, max_size: int | None, tool: Path | None, out):
-        self.args, self.max_size, self.tool, self.out = args, max_size, tool, out
+    def __init__(self, args: argparse.Namespace, max_size: int | None, size: core.OutputSize | None, tool: Path | None, out):
+        self.args, self.max_size, self.size, self.tool, self.out = args, max_size, size, tool, out
         self.counts = {CONVERTED: 0, SKIPPED: 0, FLAGGED: 0, NEEDS_TOOL: 0, ERROR: 0}
         self.results: queue.Queue = queue.Queue()
         self.sizes: dict[str, tuple[int, int] | None] = {}
@@ -151,7 +203,7 @@ class _Run:
 
     def _convert(self, png: Path, max_size: int | None) -> core.ConvertResult:
         t0 = time.monotonic()
-        res = core.convert(png, self.tool, max_size, core.LOKI)
+        res = core.convert(png, self.tool, max_size, core.LOKI, size=self.size)
         self.took[core.file_key(png)] = time.monotonic() - t0
         return res
 
@@ -167,15 +219,15 @@ class _Run:
         if found.problem:
             self.line(ERROR, f"{shown}: {found.problem}")
             return
-        entry = core.check_png(found.path, self.max_size)
+        entry = core.check_png(found.path, self.max_size, self.size)
         if entry.status == core.MISSING:
             self.line(ERROR, f"{shown}: file not found")
         elif entry.status == core.FLAGGED:
             self.line(FLAGGED, f"{shown}: {entry.reason}")
         elif entry.status == core.UP_TO_DATE and self.args.skip_up_to_date:
             self.line(SKIPPED, f"{shown} -> {found.path.with_suffix('.paa').name} (up to date)")
-        elif core.route(found.path, entry.size, core.LOKI, self.tool is not None) == core.NEEDS_TOOL:
-            self.line(NEEDS_TOOL, f"{shown}: {core.needs_tool_reason(found.path, entry.size, core.LOKI)}")
+        elif core.route(found.path, core.LOKI, self.tool is not None) == core.NEEDS_TOOL:
+            self.line(NEEDS_TOOL, f"{shown}: {core.needs_tool_reason(found.path, core.LOKI)}")
         else:
             key = core.file_key(found.path)
             self.sizes[key] = entry.size
@@ -184,11 +236,17 @@ class _Run:
             self.pool.submit(key, found.path, self.max_size, "cli")
         return
 
+    def _output_dims(self, key: str) -> tuple[int, int]:
+        """The size of the PAA written for `key`: the output size, else the PNG's size capped by max size."""
+        if self.size is not None:
+            return self.size.width, self.size.height
+        return core.target_size(*self.sizes[key], self.max_size) if self.sizes[key] else (0, 0)
+
     def on_result(self, key: str, res: core.ConvertResult, now: float) -> bool:
         """Print a finished file; False when it goes back to waiting on a lock instead."""
         shown = _display(self.paths[key])
         if res.ok:
-            w, h = core.target_size(*self.sizes[key], self.max_size) if self.sizes[key] else (0, 0)
+            w, h = self._output_dims(key)
             self.line(CONVERTED, f"{shown} -> {res.paa.name} ({w}x{h}, {res.converter}, {self.took.get(key, 0.0):.2f} s)")
             return True
         if res.retry:
@@ -232,9 +290,25 @@ class _Run:
         self.pool.shutdown()
 
 
-def _expect_files(args: argparse.Namespace) -> tuple[int | None, Path | None]:
+def _output_size(args: argparse.Namespace) -> core.OutputSize | None:
+    """The --size options as an OutputSize, or None without --size. Every misuse is a usage error."""
+    if args.size is None:
+        for opt, value in (("--fit", args.fit), ("--pad-colour", args.pad_colour), ("--pad-align", args.pad_align)):
+            if value is not None:
+                raise UsageError(f"{opt} needs --size (it says how the PNG fills the output size)")
+        return None
+    if args.max_size is not None:
+        raise UsageError("--size and --max-size cannot be used together (--size sets the output size)")
     try:
-        max_size = parse_max_size(args.max_size)
+        return core.output_size(args.size, args.fit or "contain", args.pad_colour, args.pad_align or "centre")
+    except ValueError as exc:
+        raise UsageError(f"--size/--fit/--pad-colour/--pad-align: {exc}") from None
+
+
+def _expect_files(args: argparse.Namespace) -> tuple[int | None, core.OutputSize | None, Path | None]:
+    size = _output_size(args)
+    try:
+        max_size = parse_max_size(args.max_size or "off")
     except ValueError as exc:
         raise UsageError(f"--max-size: {exc}") from None
     if args.jobs is not None and args.jobs < 1:
@@ -252,16 +326,16 @@ def _expect_files(args: argparse.Namespace) -> tuple[int | None, Path | None]:
             tool = core.find_imagetopaa()
         except core.ToolNotFound:
             tool = None  # only a file that needs it reports "needs Arma 3 Tools"
-    return max_size, tool
+    return max_size, size, tool
 
 
 def _convert(args: argparse.Namespace, out) -> int:
-    max_size, tool = _expect_files(args)
+    max_size, size, tool = _expect_files(args)
     files = expand_inputs(args.inputs, args.recursive)
     if not files:
         raise UsageError("no PNG files matched the inputs")
     t0 = time.monotonic()
-    run = _Run(args, max_size, tool, out)
+    run = _Run(args, max_size, size, tool, out)
     run.run(files)
     c = run.counts
     print(
@@ -277,12 +351,14 @@ def main(argv: list[str] | None = None) -> int:
         if stream is not None and hasattr(stream, "reconfigure"):
             stream.reconfigure(errors="replace")
     ap = _build_parser()
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv[:1] == ["convert"]:  # the 0.3.0 form; only the bare first word, so ".\\convert" stays an input (#62)
+        argv = argv[1:]
+    if not argv:  # nothing to do: short usage and where the options are, on stderr, exit 2
+        print(f"usage: {USAGE}\n{NO_ARGS_LINE}", file=sys.stderr, flush=True)
+        return 2
     try:
-        args = ap.parse_args(sys.argv[1:] if argv is None else argv)
-        if args.command != "convert":
-            ap.print_help()
-            raise UsageError("no command given: use 'convert'")
-        return _convert(args, sys.stdout)
+        return _convert(ap.parse_args(argv), sys.stdout)
     except UsageError as exc:
         print(f"Loki-cli.exe: error: {exc}", file=sys.stderr, flush=True)
         return 2

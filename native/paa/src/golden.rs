@@ -24,7 +24,9 @@ fn rule(suffix: &str) -> &'static Rule {
 
 /// FNV-1a 64 of a byte string.
 fn fnv(data: &[u8]) -> u64 {
-    data.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &b| (h ^ b as u64).wrapping_mul(0x0100_0000_01b3))
+    data.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &b| {
+        (h ^ b as u64).wrapping_mul(0x0100_0000_01b3)
+    })
 }
 
 /// Deterministic test image: smooth gradient, noise, flat patches, and an alpha pattern.
@@ -47,7 +49,11 @@ fn synth(w: usize, h: usize, alpha: u8) -> Image {
             let (r, g, b) = if flat {
                 (200, 90, 30)
             } else {
-                ((x * 255 / w) as u8, (y * 255 / h) as u8, (rnd() / 2).wrapping_add(((x ^ y) & 63) as u8))
+                (
+                    (x * 255 / w) as u8,
+                    (y * 255 / h) as u8,
+                    (rnd() / 2).wrapping_add(((x ^ y) & 63) as u8),
+                )
             };
             let a = match alpha {
                 0 => 255,
@@ -79,25 +85,63 @@ fn golden_hashes() {
     // ImageToPAA. Mip 0 is unaffected by this.
     // Fields: (case name, rule suffix, width, height, alpha mode for `synth`, expected FNV-1a hash
     // of the encoded file).
+    // Two hash pairs are equal on purpose, not a copy error: `plain_opaque` equals `co_opaque` and
+    // `plain_soft` equals `ca_soft`, because the unsuffixed rule and `_co`/`_ca` store the same bytes
+    // for those inputs (same format, FLAG and mip filter). The pairs are asserted after the loop
+    // below, so a change that makes one class drift from the other fails by name.
+    // #31: co_soft, ca_soft, plain_soft, ca_near_opaque and ca_lzo were re-recorded for the AVGC tag
+    // only (the per-texel colour table of `avgc.rs`). Checked once against the pre-#31 build on a
+    // near-opaque image: the files differ only in the three AVGC colour bytes. co_soft and plain_binary
+    // were re-recorded again for the DXT1 1-bit alpha masks (`cutout.rs`: the masks of mips 1 down follow the
+    // coverage of the level; mip 0 of a binary alpha is unchanged).
     let cases: &[(&str, &str, usize, usize, u8, u64)] = &[
         ("co_opaque", "co", 64, 64, 0, 0x88202944b1d9b0f5),
         ("co_binary", "co", 64, 32, 1, 0x2e73a7bb25eebd2e),
-        ("co_soft", "co", 32, 64, 2, 0x62c67a30a459d61e),
+        ("co_soft", "co", 32, 64, 2, 0x89acd0b9dfc92589),
         ("ca_opaque", "ca", 64, 64, 0, 0xef33eb4cb092cf12),
-        ("ca_soft", "ca", 64, 64, 2, 0x79ca463546e51261),
-        ("ca_near_opaque", "ca", 64, 64, 3, 0xc6b7ef1761d952b0),
+        ("ca_soft", "ca", 64, 64, 2, 0xe8c95e84e6142dac),
+        ("ca_near_opaque", "ca", 64, 64, 3, 0x9577ae99139ff92e),
         ("plain_opaque", "", 64, 64, 0, 0x88202944b1d9b0f5),
-        ("plain_binary", "", 64, 64, 1, 0x13006a28d2c53998),
-        ("plain_soft", "", 64, 64, 2, 0x79ca463546e51261),
+        ("plain_binary", "", 64, 64, 1, 0x504b5377a78f266f),
+        ("plain_soft", "", 64, 64, 2, 0xe8c95e84e6142dac),
         // nohq: the normal-map alpha chain runs first, every level (including level 0) is
         // renormalised, the swizzle comes after the chain, and the FLAG tag is set from alpha.
-        // R and G are truncated in the chain.
+        // R and G are truncated in the box chain. nohq_soft changed in #53: the alpha-weighted mean
+        // is now rounded half to even (was float weights with a floor), so every partly transparent quad can differ.
         ("nohq_opaque", "nohq", 64, 64, 0, 0xb47c7caeeb59fcb1),
-        ("nohq_soft", "nohq", 64, 32, 2, 0xcda6b76bb1faeb5e),
+        ("nohq_soft", "nohq", 64, 32, 2, 0x66a114d0bb9e7e89),
         // 256 wide: wide enough for the LZO layer to apply to the top mips (see `LZO_MIN_WIDTH`
         // in encode.rs).
         ("co_lzo", "co", 256, 128, 0, 0x25f199e715a2a93f),
-        ("ca_lzo", "ca", 256, 256, 2, 0xefa2503196bbecf3),
+        ("ca_lzo", "ca", 256, 256, 2, 0x153c930529cd7416),
+    ];
+    let mut bad = Vec::new();
+    for &(name, suffix, w, h, alpha, want) in cases {
+        let got = fnv(&encode::encode(synth(w, h, alpha), rule(suffix)).unwrap());
+        if got != want {
+            bad.push(format!("{name}: got 0x{got:016x}, want 0x{want:016x}"));
+        }
+    }
+    // The two intentional duplicates (see above): the table must keep each pair equal.
+    let hash_of = |n: &str| cases.iter().find(|c| c.0 == n).unwrap().5;
+    for (a, b) in [("co_opaque", "plain_opaque"), ("ca_soft", "plain_soft")] {
+        if hash_of(a) != hash_of(b) {
+            bad.push(format!("{a} and {b} must have the same hash"));
+        }
+    }
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+}
+
+// Detail (`dt`) and normal-map (`nohq`) classes at the two sizes that matter for them: 256 (LZO
+// applies to the top mips) and 512 (one more chain level). The first golden table has `nohq` only at
+// 64, where the whole chain is stored raw. Added by #44; recorded from the encoder as it was then; nohq_256_soft re-recorded in #53 (alpha-weighted rounding, soft alpha).
+#[test]
+fn golden_hashes_detail_and_normal_maps() {
+    let cases: &[(&str, &str, usize, usize, u8, u64)] = &[
+        ("dt_256", "dt", 256, 256, 0, 0x5df3eca774d41b71),
+        ("dt_512_binary", "dt", 512, 512, 1, 0x068052eed038606a),
+        ("nohq_256_soft", "nohq", 256, 256, 2, 0xe2cc648f0f56ccd1),
+        ("nohq_512", "nohq", 512, 512, 0, 0x4f93d8c4b4d18843),
     ];
     let mut bad = Vec::new();
     for &(name, suffix, w, h, alpha, want) in cases {
@@ -107,4 +151,59 @@ fn golden_hashes() {
         }
     }
     assert!(bad.is_empty(), "{}", bad.join("\n"));
+}
+
+// DXT1 punch-through over many kinds of block: all transparent, solid colour with a few holes,
+// solid with a single opaque texel, and a two-colour gradient with holes. Alpha must come back
+// exactly as the 128 cut-off says (transparent texels 0, opaque 255) in every block, and the bytes are
+// pinned. `Dxt1 { punch: true }` is reachable only through this direct call: `encode_file` refuses
+// 1-bit alpha for DXT1 (decision 34), so no other test reaches the 3-colour block path with holes.
+#[test]
+fn dxt1_punch_through_over_many_block_kinds() {
+    use crate::dxt::{decode_image, encode_image, Format};
+    let (w, h) = (64usize, 64usize);
+    let mut s = 0x0bad_cafeu32;
+    let mut rnd = move || {
+        s = s.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        (s >> 24) as u8
+    };
+    let mut rgba = Vec::with_capacity(w * h * 4);
+    let mut kind_of = vec![0u8; w * h];
+    for y in 0..h {
+        for x in 0..w {
+            let kind = ((x / 4) + (y / 4) * 3 + (x / 4) / 5) % 4;
+            kind_of[y * w + x] = kind as u8;
+            let px = match kind {
+                0 => [rnd(), rnd(), rnd(), 0], // all transparent
+                1 => [30, 160, 220, if rnd() < 64 { 0 } else { 255 }], // a few holes
+                2 => [30, 160, 220, if (x % 4, y % 4) == (1, 2) { 255 } else { 0 }], // one opaque texel
+                _ => [
+                    (x * 4) as u8,
+                    (y * 4) as u8,
+                    90,
+                    if rnd() < 90 { 0 } else { 255 },
+                ], // gradient, holes
+            };
+            rgba.extend_from_slice(&px);
+        }
+    }
+    let data = encode_image(&rgba, w, h, Format::Dxt1 { punch: true });
+    let out = decode_image(&data, w, h, false).unwrap();
+    for i in 0..w * h {
+        let (src, got) = (&rgba[i * 4..][..4], &out[i * 4..][..4]);
+        assert_eq!(
+            got[3],
+            if src[3] >= 128 { 255 } else { 0 },
+            "texel {i} (block kind {})",
+            kind_of[i]
+        );
+        if (kind_of[i] == 1 || kind_of[i] == 2) && src[3] >= 128 {
+            // solid colour blocks come back within the 5/6-bit quantisation step
+            assert!(
+                src[..3].iter().zip(got).all(|(&a, &b)| a.abs_diff(b) <= 8),
+                "texel {i}: {src:?} -> {got:?}"
+            );
+        }
+    }
+    assert_eq!(fnv(&data), 0x704a_5965_6799_7947, "punch-through blocks");
 }

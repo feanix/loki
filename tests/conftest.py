@@ -57,6 +57,14 @@ def track_app(app):
     return app
 
 
+@pytest.fixture(autouse=True)
+def outputs_store(tmp_path_factory, monkeypatch):
+    """Loki's outputs.json (#60) lives in a temp folder for every test, never in the real %APPDATA%."""
+    path = tmp_path_factory.mktemp("outputs") / "outputs.json"
+    monkeypatch.setenv("LOKI_OUTPUTS", str(path))
+    return path
+
+
 @pytest.fixture
 def tk_root():
     """One withdrawn Tk per test, destroyed on the main thread in teardown; loki worker threads joined first."""

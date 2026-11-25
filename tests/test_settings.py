@@ -4,6 +4,8 @@ import json
 import os
 import threading
 
+import pytest
+
 from loki import core
 from loki.settings import FileSetting, Settings
 
@@ -108,7 +110,7 @@ def test_a_0_1_0_settings_file_loads_and_folder_fields_are_not_written_back(tmp_
     assert s.imagetopaa_path == "C:/tools/ImageToPAA.exe" and s.files() == []
     s.add_files([tmp_path / "x.png"])  # any write migrates the file to v2
     data = json.loads(p.read_text(encoding="utf-8"))
-    assert set(data) == {"version", "imagetopaa_path", "converter", "files"}
+    assert set(data) == {"version", "imagetopaa_path", "converter", "sort", "files"}
     assert "folder" not in p.read_text(encoding="utf-8")
 
 
@@ -140,3 +142,48 @@ def test_thread_safe_snapshot_while_editing(tmp_path):
     stop.set()
     t.join()
     assert set(seen) == {8}
+
+
+def test_a_0_3_0_settings_file_keeps_every_rows_toggle_after_the_auto_watch_rename(tmp_path):
+    """The key stays "bake" on disk (decision 49 renames only what the user sees): a 0.3.0 file loads intact."""
+    p = tmp_path / "v030.json"
+    rows = [("a.png", 256, True, "loki"), ("b.png", None, False, "bohemia"), ("c.png", 1024, True, None)]
+    p.write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "imagetopaa_path": None,
+                "converter": "loki",
+                "files": [
+                    {"path": str(tmp_path / n), "max_size": cap, "bake": on, "made_by": by} for n, cap, on, by in rows
+                ],
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    s = Settings.load(p)
+    assert [(os.path.basename(f.path), f.max_size, f.bake) for f in s.files()] == [
+        (n, cap, on) for n, cap, on, _ in rows
+    ]
+    s.set_bake([s.files()[1].key], True)  # a save writes the same key back, so 0.3.0 can still read it
+    assert [f["bake"] for f in json.loads(p.read_text(encoding="utf-8"))["files"]] == [True, True, True]
+
+
+def test_sort_is_saved_and_old_or_bad_values_load_as_file_ascending(tmp_path):
+    p = tmp_path / "s.json"
+    assert Settings.load(p).sort == ("file", False)  # no file
+    s = Settings.load(p)
+    s.set_sort("size", True)
+    assert json.loads(p.read_text(encoding="utf-8"))["sort"] == {"column": "size", "descending": True}
+    assert Settings.load(p).sort == ("size", True)
+    with pytest.raises(ValueError):
+        s.set_sort("nope", False)
+    data = json.loads(p.read_text(encoding="utf-8"))
+    for stored in (None, "size", {"column": "bogus", "descending": False}, {"column": "size", "descending": "x"}):
+        data["sort"] = stored  # 0.3.0 had no key; garbage must not break the load
+        p.write_text(json.dumps(data), encoding="utf-8")
+        assert Settings.load(p).sort == ("file", False)
+    data.pop("sort")
+    p.write_text(json.dumps(data), encoding="utf-8")
+    assert Settings.load(p).sort == ("file", False)

@@ -56,7 +56,7 @@ def test_icon_present():
 
 
 def test_version_is_one_value_everywhere():
-    assert loki.__version__ == "0.3.0"
+    assert loki.__version__ == "0.3.1"
     assert f'version = "{loki.__version__}"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
 
 
@@ -81,8 +81,10 @@ def test_readme_suffix_lists_match_the_encoder():
     assert len(listed) == len(set(listed))
     for s in listed:
         assert _paa.supported(f"x{s}.png"), s
-    for s in ("_sky", "_cat", "_can", "_non", "_zzz"):
+    for s in ("_cat", "_can", "_non"):
         assert not _paa.supported(f"x{s}.png"), s
+    assert _paa.supported("x_sky.png")  # verified under the relative checks (#31), so it is in the list above
+    assert _paa.supported("x_zzz.png")  # an unknown suffix gets the default rule (#054), so it is not a fallback
     rules = (ROOT / "native" / "paa" / "src" / "rules.rs").read_text(encoding="utf-8")
     accepted = {f"_{n}" for n in set(re.findall(r"\*_([A-Za-z0-9]+)\.\*", rules)) if _paa.supported(f"x_{n}.png")}
     assert accepted == set(listed)  # nothing the encoder takes is missing from the README
@@ -100,6 +102,24 @@ def test_release_zip_name_and_members():
     assert release.DOCS == ("README.md", "LICENSE", "THIRD_PARTY_NOTICES")
     for name in release.DOCS:
         assert (ROOT / name).is_file()
+
+
+def test_readme_handover_statements_name_exactly_what_the_help_names():
+    """#56: the hand-over list is one list: README Known limits, "The built-in converter", "Command line" and the
+    --help sentence name the same suffixes (and no others), which are the ones the encoder refuses."""
+    from loki import _paa, cli
+
+    text = (ROOT / "README.md").read_text(encoding="utf-8")
+    want = set(re.findall(r"_[a-z]+", cli.HANDOVER_CASES))
+    assert want == {"_cat", "_can", "_non"}
+    known = next(ln for ln in text.splitlines() if ln.startswith("The Loki converter writes every texture type itself"))
+    auto = next(ln for ln in text.splitlines() if ln.startswith("- **ImageToPAA** (automatic"))
+    cmdline = next(ln for ln in text.splitlines() if ln.startswith("The built-in converter does most files."))
+    for line in (known, auto, cmdline):
+        named = set(re.findall(r"`(_[a-z]+)`", line))
+        assert named == want, line
+    for s in want:
+        assert not _paa.supported(f"x{s}.png")
 
 
 def test_contributing_says_issues_only():

@@ -1,11 +1,11 @@
-"""Per-file encoder refusal and routing per suffix (#025, criterion 5; alpha refusals gone in #31).
+"""Per-file encoder refusal and routing per suffix (criterion 5, alpha refusals gone in).
 
 The encoder alone decides what it refuses (`_paa.NeedsImageToPAA`); Python never predicts it. So the
 expectations below come from `_paa.supported` and from asking `_paa.encode` itself, never from a suffix
 list written here. The suffixes are the ones Bohemia's own TexConvert.cfg names (read from the tool's folder).
 Tests that run ImageToPAA are skipped with a reason when it is not installed.
 
-Since #31 (decision 47) the encoder refuses no alpha file: soft alpha and DXT1 1-bit alpha are encoded by Loki. The
+The encoder refuses no alpha file: soft alpha and DXT1 1-bit alpha are encoded by Loki. The
 per-file fallback (the encoder says no, ImageToPAA converts) is still the machinery for anything the encoder may
 refuse, so its tests drive it with a stand-in encoder that refuses files named `refused_*` the way the real one
 refuses a noise filter; separate tests pin that the real encoder takes every alpha file.
@@ -95,7 +95,7 @@ def run_all(app, timeout=240.0):
 
 @pytest.mark.parametrize("name", ["soft_ca.png", "mask_co.png"])  # soft alpha; DXT1 1-bit alpha
 def test_alpha_files_are_converted_by_loki_without_the_tool(tmp_path, name):
-    """#31: no alpha refusal is left, so these need no Arma 3 Tools."""
+    """No alpha refusal is left, so these need no Arma 3 Tools."""
     png = (soft_alpha_png if name == "soft_ca.png" else bit_alpha_png)(tmp_path / name)
     assert encoder_refuses(png, tmp_path) is None
     res = core.convert(png, None, None, core.LOKI)
@@ -104,7 +104,7 @@ def test_alpha_files_are_converted_by_loki_without_the_tool(tmp_path, name):
 
 
 def test_binary_alpha_ca_shrunk_by_max_size_converts_in_loki(tmp_path):
-    """#52 / #31 criterion 8: a hard-edged `_ca` whose edge is off the 2x2 grid (a 1 px hole at an odd column) turns
+    """A hard-edged `_ca` whose edge is off the 2x2 grid (a 1 px hole at an odd column) turns
     soft in the mip filter when max size shrinks it. It used to be handed to ImageToPAA ("soft alpha"); Loki encodes it."""
     im = Image.new("RGBA", (128, 128), (200, 100, 50, 255))
     for y in range(128):
@@ -237,7 +237,7 @@ def test_every_cfg_suffix_with_the_tool_absent(tmp_path, suffix_set):
                     assert row.status_text.startswith("needs Arma 3 Tools")
             seen.add((made is not None, text is not None))
         assert {(True, False), (False, True)} <= seen  # both outcomes occurred in the set
-        # #31: no alpha file is refused any more; the soft-alpha files of the set were all converted by Loki
+        # no alpha file is refused any more; the soft-alpha files of the set were all converted by Loki
         assert not any("soft alpha" in r.status_text or "1-bit alpha" in r.status_text for r in rows.values())
         assert any(r.made_by == core.LOKI for p, r in rows.items() if p.parent.name == "soft")
     finally:

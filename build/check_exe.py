@@ -7,7 +7,7 @@ to its own window and this script asserts the dropped files appear as rows in th
 Also writes the screenshot-with-mixed-caps fixture (shot.scn) and takes a second screenshot of it.
 Then converts a _co, a _sky and a _cat PNG with ImageToPAA hidden (settings point at a path that does not exist, and
 the minimal PATH holds no Arma 3 Tools): the exe's built-in Loki converter must write the _co and _sky .paa
-(made_by=loki; _sky moved into Loki in 0.3.1, #031) and the _cat row (a noise suffix, still ImageToPAA-only) must
+(made_by=loki; _sky is Loki's since 0.3.1) and the _cat row (a noise suffix, still ImageToPAA-only) must
 say it needs Arma 3 Tools. No Rust or Python is on that PATH either.
 Then checks dist/Loki-cli.exe (see check_cli): PE subsystems, --help/--version, one conversion per input kind,
 exit codes 0/1/2, output through cmd.exe and powershell.exe piped and redirected to a file, and that
@@ -74,9 +74,9 @@ def windows_of(pid: int) -> list[int]:
     proc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 
     def cb(hwnd, _lp):
-        owner = wintypes.DWORD()
-        ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
-        if owner.value == pid:
+        window_pid = wintypes.DWORD()
+        ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(window_pid))
+        if window_pid.value == pid:
             found.append(hwnd)
         return True
 

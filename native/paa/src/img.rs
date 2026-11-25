@@ -67,14 +67,14 @@ pub fn load_png(path: &Path) -> Result<Image, Error> {
     let hdr = rd.info();
     let (hw, hh) = (hdr.width as usize, hdr.height as usize);
     // No zero test: the png crate already refuses a 0-sized header in `read_info` ("Invalid image
-    // dimensions"), so such a check here could never run (#44 mutant t5_zero_guard survived).
+    // dimensions"), so such a check here could never run (mutant t5_zero_guard survived).
     if hw > MAX_LOAD_SIDE || hh > MAX_LOAD_SIDE || hw * hh > MAX_LOAD_PIXELS {
         return Err(Error::Png(format!(
             "PNG size {hw}x{hh} is too big to load (at most {MAX_LOAD_SIDE} on a side and 8192x8192 pixels in all): scale it to 8192 or less in your image editor"
         )));
     }
     // A PLTE whose length is not a multiple of 3 makes the png crate panic while expanding (0.17.16,
-    // transform/palette.rs), even when every index is 0; ImageToPAA rejects it too. (#46, F8)
+    // transform/palette.rs), even when every index is 0; ImageToPAA rejects it too. (F8)
     if let Some(pal) = &hdr.palette {
         if pal.len() % 3 != 0 {
             return Err(Error::Png(format!(

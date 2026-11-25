@@ -1,5 +1,5 @@
-"""Output size in the window (#61, decision 51): the per-row setting in the model, the settings file, the headless
-scenario commands and the dialog. The encoder and the up-to-date record are #60's (tests/test_output_size.py); these
+"""Output size in the window: the per-row setting in the model, the settings file, the headless
+scenario commands and the dialog. The encoder and the up-to-date record are tested in tests/test_output_size.py; these
 tests check the wiring: the row cell, exclusivity with max size, status, persistence, and what Convert all does."""
 
 import json

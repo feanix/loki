@@ -226,7 +226,7 @@ CLI_POINTER = (
 
 
 def _point_to_cli() -> int:
-    """`Loki.exe convert ...` or `Loki.exe <input>` (decision 21, #62): no window; say where the CLI lives on stderr and exit 2.
+    """`Loki.exe convert ...` or `Loki.exe <input>`: no window; say where the CLI lives on stderr and exit 2.
 
     The windowed exe has no console of its own, so when stderr is not already redirected it attaches to the
     parent's console (cmd, PowerShell) and writes there."""
@@ -247,7 +247,7 @@ def _point_to_cli() -> int:
 def main(argv: list[str] | None = None) -> int:
     """Run Loki; an unexpected crash is written to crash.log (and shown in a dialog on the GUI path)."""
     first = (sys.argv[1:] if argv is None else argv)[:1]
-    # `convert` or a bare input (a PNG, folder or pattern, #62) is a CLI call: no window, point to Loki-cli.exe.
+    # `convert` or a bare input (a PNG, folder or pattern) is a CLI call: no window, point to Loki-cli.exe.
     # Options (--screenshot, --settings, scenario flags) are not.
     if first and not first[0].startswith("-"):
         return _point_to_cli()

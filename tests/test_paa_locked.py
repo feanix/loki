@@ -1,4 +1,4 @@
-"""Output side (#028): the existing .paa is held open by another program (TexView, Arma file patching,
+"""Output side: the existing .paa is held open by another program (TexView, Arma file patching,
 Explorer preview, AV) when the converted file is due to replace it. The save stays pending, the old .paa
 stays intact, nothing is left behind, and it is converted once the hold ends. Real CreateFileW holds
 (GENERIC_READ, FILE_SHARE_READ); the watcher tests run on a fake clock.
@@ -27,7 +27,7 @@ OLD = b"old paa bytes"
 @pytest.fixture(autouse=True)
 def fast_replace(monkeypatch):
     monkeypatch.setattr(core, "_run_tool", fake_run_tool)
-    monkeypatch.setattr(core, "_REPLACE_PAUSE", 0.001)  # the short #027 retry, shrunk: a held PAA fails fast
+    monkeypatch.setattr(core, "_REPLACE_PAUSE", 0.001)  # the short retry, shrunk: a held PAA fails fast
 
 
 def hold(paa):
@@ -110,7 +110,7 @@ def test_held_by_a_real_acl_denial_is_not_a_hold(tmp_path):
     assert not core._held_open(exc, paa)  # nobody has it open: the probe opens it
 
 
-# --- criterion 1: watcher + pool, fake clock, the advisor case at 6 s and 60 s ---
+# --- watcher + pool, fake clock, the exporter case at 6 s and 60 s ---
 def watched(tmp_path):
     png, paa = png_with_old_paa(tmp_path)
     s = Settings(path=tmp_path / "cfg" / "s.json")

@@ -1,5 +1,5 @@
-//! Tests for soft alpha (task #31): the AVGC colour of texels with alpha, and the DXT1 1-bit alpha
-//! mask. The numbers are ImageToPAA observations (research/paa-encoder/ALPHA31.md), not outputs of
+//! Tests for soft alpha: the AVGC colour of texels with alpha, and the DXT1 1-bit alpha
+//! mask. The numbers are ImageToPAA observations, not outputs of
 //! this encoder.
 
 use crate::encode;
@@ -126,7 +126,7 @@ fn cut(alphas: &[u8], w: usize, h: usize) -> Vec<u8> {
 }
 
 // Binary alpha (0 or 255, the usual cut-out art) keeps the plain threshold at 128: ImageToPAA's mask agrees
-// with a threshold on 99.6 percent of the texels of the owner hair card.
+// with a threshold on 99.6 percent of the texels of a real hair-card texture.
 #[test]
 fn binary_alpha_is_cut_at_128() {
     let alphas: Vec<u8> = (0..64).map(|i| if i % 3 == 0 { 0 } else { 255 }).collect();

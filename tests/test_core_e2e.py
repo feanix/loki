@@ -61,7 +61,7 @@ def test_real_convert_in_odd_folder_name(tmp_path):
     assert res.paa.read_bytes()[:2] in VALID_TAGS
 
 
-# --- #006: format follows the output name suffix, sizes follow the cap ---
+# --- format follows the output name suffix, sizes follow the cap ---
 @needs_tool
 @pytest.mark.parametrize("max_size", [None, 512])
 @pytest.mark.parametrize(
@@ -137,7 +137,7 @@ def test_parallel_convert_all_matches_sequential_conversion_byte_for_byte(tmp_pa
 
 @needs_tool
 def test_real_handover_with_an_output_size_and_the_paa_reads_back(tmp_path):
-    """#60: ImageToPAA converts the sized copy, and reads back the untouched .paa."""
+    """ImageToPAA converts the sized copy, and reads back the untouched .paa."""
     png = tmp_path / "tex.png"
     Image.new("RGBA", (300, 200), (200, 30, 30, 255)).save(png)
     size = core.output_size("512x256", "contain", "#00ff00", "top-left")

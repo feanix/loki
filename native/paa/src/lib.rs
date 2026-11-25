@@ -114,7 +114,7 @@ pub fn mip_raw(m: &Mip, dxt5: bool) -> Result<std::borrow::Cow<'_, [u8]>, Error>
 }
 
 /// True when Loki's router may send the PNG file `name` (e.g. `"rock_co.png"`) to this encoder:
-/// the stem has no suffix or a suffix no class names (both get the default rule, #054), or its
+/// the stem has no suffix or a suffix no class names (both get the default rule), or its
 /// suffix names a class of the rule table that is verified against ImageToPAA and implemented
 /// (`Rule::routable`). Every other name (the noise classes, not a .png) is False; the
 /// caller sends those files to ImageToPAA. A trailing `.png` (any case) is ignored; so is any directory part

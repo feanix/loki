@@ -1,7 +1,7 @@
 """Persisted settings (JSON) for Loki: the converter choice and the file list with each file's max size,
 bake toggle and the converter that wrote its last .paa.
 
-One owner for everything saved between launches. A missing or corrupt file yields defaults and
+The one place for everything saved between launches. A missing or corrupt file yields defaults and
 never raises; writes are atomic (temp file in the same directory, then os.replace) so a crash
 mid-save cannot leave a half-written file. A 0.1.0 file (folder model) still loads: its tool path
 is kept, its folder fields are ignored and never written back.
@@ -81,8 +81,8 @@ def _valid_cap(value: object) -> bool:
 @dataclass
 class Settings:
     imagetopaa_path: str | None = None
-    converter: str = core.LOKI  # the user's choice (decision 17); a file's route may still need ImageToPAA
-    sort: tuple[str, bool] = DEFAULT_SORT  # (column id, descending) of the file list; remembered (#57)
+    converter: str = core.LOKI  # the user's choice; a file's route may still need ImageToPAA
+    sort: tuple[str, bool] = DEFAULT_SORT  # (column id, descending) of the file list; remembered
     path: Path | None = field(default=None, repr=False, compare=False)
     _files: list[FileSetting] = field(default_factory=list, repr=False, compare=False)
     # The watcher thread reads the list while the GUI thread edits it.

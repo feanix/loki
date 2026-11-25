@@ -1,7 +1,7 @@
 """Model tests for loki.app.App: headless, fake converter (core.convert is monkeypatched), tmp settings.
 
 Real threads are used (watcher, convert-all worker) but with tiny intervals and bounded waits.
-The list is files dropped in (decision 11): every test adds files through App.add_files, the one drop handler.
+The list is files dropped in: every test adds files through App.add_files, the one drop handler.
 """
 
 import json
@@ -343,7 +343,7 @@ def test_bad_png_is_a_row_not_a_crash(tmp_path, tree):
 def test_summary_counts_needs_tool_rows(tmp_path):
     from PIL import Image
 
-    big = tmp_path / "noise_cat.png"  # a noise suffix is ImageToPAA's (a PNG over 4096 is Loki's since #55)
+    big = tmp_path / "noise_cat.png"  # a noise suffix is ImageToPAA's (a PNG over 4096 is Loki's)
     Image.new("RGB", (64, 64), (9, 9, 9)).save(big)
     app = make_app(tmp_path, find_tool=no_tool)
     app.set_converter(core.LOKI)
@@ -476,7 +476,7 @@ def test_folder_label_keeps_the_end_of_a_long_path(tmp_path):
     app.close()
 
 
-# --- parallel pool (decision 13, #011) ---
+# --- parallel pool ---
 def test_app_pool_uses_the_core_worker_limit(tmp_path):
     app = make_app(tmp_path)
     assert app._pool.workers == core.convert_workers()
@@ -659,7 +659,7 @@ def test_stale_watcher_snapshot_does_not_undo_a_finished_convert(tmp_path, tree,
     app.close()
 
 
-# --- sorting (#57, decision 49) -----------------------------------------------------------------------------
+# --- sorting -----------------------------------------------------------------------------
 
 
 def srow(path, size=(64, 64), cap=None, bake=False, status=core.UP_TO_DATE, busy=False):

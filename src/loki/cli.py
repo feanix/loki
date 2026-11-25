@@ -1,10 +1,10 @@
-"""Command line (decisions 19, 21, #018): `Loki-cli.exe <inputs...>` converts (a leading `convert` is still accepted, #62) PNGs to PAA and exits.
+"""Command line: `Loki-cli.exe <inputs...>` converts PNGs to PAA and exits (a leading `convert` is still accepted).
 
 Reuses the GUI's pieces (core.check_png / route / convert, pool.ConvertPool, the watcher's backoff
 schedule) and never reads or writes the GUI's settings or file list. No Tk. One line per file on stdout,
 flushed as each file finishes, then a summary. Exit 0: all converted or skipped; 1: any flagged,
 needs-tool or error; 2: usage error (bad option or value, no PNG matched). A result with retry=True
-(png or output .paa held open, #015/#028) is resubmitted with the #015 backoff until --wait-locked
+(png or output .paa held open) is resubmitted with the watcher's backoff until --wait-locked
 seconds have passed since its first wait.
 """
 
@@ -28,8 +28,8 @@ from loki.watcher import backoff_due
 DEFAULT_WAIT_LOCKED = 30.0
 RETRY_PASS = 0.5  # seconds between backoff passes (the watcher's default poll interval)
 KIND_WIDTH = 11
-# Plain-words list of what the built-in converter hands over (README "Known limits"); the suffix names in it
-# are checked against the encoder by tests/test_cli.py, so it cannot drift.
+# Plain-words list of what the built-in converter hands over (docs/CONVERTER.md "Known limits"); the suffix
+# names in it are checked against the encoder by tests/test_cli.py, so it cannot drift.
 HANDOVER_CASES = (
     "_cat, _can and _non (they use Bohemia's own noise generator)"
 )
@@ -46,10 +46,10 @@ class _Parser(argparse.ArgumentParser):
         raise UsageError(message)
 
 
-# Help text (#59, #62). Shown raw (RawDescriptionHelpFormatter), so line breaks here are the ones printed; keep
+# Help text. Shown raw (RawDescriptionHelpFormatter), so line breaks here are the ones printed; keep
 # the screen at 60 lines or fewer at 80 columns (tests/test_cli_help.py). Example lines start with "Loki-cli.exe" and
 # that test runs each through the parser, so add new examples as more lines of the same shape.
-GUIDE_LINE = "Full guide: https://github.com/feanix/loki#command-line"  # README heading "## Command line"
+GUIDE_LINE = "Full guide: https://github.com/feanix/loki/blob/main/docs/CLI.md"  # the file must exist (tests/test_cli_help.py)
 EXIT_CODE_LINES = (
     "0  all files converted or up to date",
     "1  any file flagged, needing Arma 3 Tools, or failed",
@@ -92,7 +92,7 @@ def _wrap(text: str) -> str:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    """One parser: converting is the only action, so the options live at the top level (#62)."""
+    """One parser: converting is the only action, so the options live at the top level."""
     ap = _Parser(
         prog="Loki-cli.exe",
         usage=USAGE,
@@ -352,7 +352,7 @@ def main(argv: list[str] | None = None) -> int:
             stream.reconfigure(errors="replace")
     ap = _build_parser()
     argv = list(sys.argv[1:] if argv is None else argv)
-    if argv[:1] == ["convert"]:  # the 0.3.0 form; only the bare first word, so ".\\convert" stays an input (#62)
+    if argv[:1] == ["convert"]:  # the 0.3.0 form; only the bare first word, so ".\\convert" stays an input
         argv = argv[1:]
     if not argv:  # nothing to do: short usage and where the options are, on stderr, exit 2
         print(f"usage: {USAGE}\n{NO_ARGS_LINE}", file=sys.stderr, flush=True)

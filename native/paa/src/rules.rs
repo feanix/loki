@@ -206,7 +206,7 @@ impl Rule {
     }
 
     /// The default pad colour (RGBA, source space, before any swizzle) for an output size that leaves
-    /// canvas to fill (0.3.1, decision 51). The one place that says it:
+    /// canvas to fill (0.3.1). The one place that says it:
     /// * normal maps (a normal-map mip filter): `128,128,255,255`, the flat normal;
     /// * ambient shadow (`_as`, `_ads`, `_adshq`): `255,255,255,255`, no shadow;
     /// * classes that keep alpha (a format with an alpha channel and the source alpha stored as alpha:
@@ -318,7 +318,7 @@ pub const RULES: &[Rule] = &[
     },
     // Rules without `verified: true` are not routed here: `_cat`, `_non` and `_can` use noise
     // filters we cannot reproduce. (`_sky` failed the old absolute mip 2 floor; under the relative check
-    // of #49 it passes, #31.)
+    // of the relative check it passes.)
     Rule {
         class: "ColorAlphaTest",
         pattern: "*_cat.*",
@@ -711,7 +711,7 @@ pub fn find(suffix: &str) -> Option<&'static Rule> {
 }
 
 /// The rule for a suffix: its class, else `PLAIN`. The one place that says "an unknown suffix gets
-/// the default rule" (observed #054: ImageToPAA wrote the same type, tags and mips for `_foo`,
+/// the default rule" (observed: ImageToPAA wrote the same type, tags and mips for `_foo`,
 /// `_xyz`, `_co2`, `_nrm`, `_caa`, `_cox`, `_nohq2` and a name with no underscore).
 pub fn for_suffix(suffix: &str) -> &'static Rule {
     find(suffix).unwrap_or(&PLAIN)

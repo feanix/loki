@@ -1,4 +1,4 @@
-"""Sides below 4 px through the Python boundary and `core.convert` (0.3.1, F4 of the #40 deep scan).
+"""Sides below 4 px through the Python boundary and `core.convert` (0.3.1, F4 of the deep scan).
 
 Why: Loki's own encoder writes the ARGB file ImageToPAA writes for 1x1, 2x2, 1xN and Nx1 (no hand-over), and
 refuses forced-DXT classes with a message that names the 4 px minimum (ImageToPAA fails there too and leaves a
@@ -49,7 +49,7 @@ def test_the_native_encoder_raises_value_error_not_a_hand_over_for_a_dxt_class(t
 
 
 def test_soft_alpha_small_unsuffixed_image_is_encoded_like_a_large_one(tmp_path):
-    """#31: the AVGC of soft alpha is reproduced, so a tiny soft-alpha image is encoded (ARGB4444), not handed over."""
+    """The AVGC of soft alpha is reproduced, so a tiny soft-alpha image is encoded (ARGB4444), not handed over."""
     png = tmp_path / "soft.png"
     Image.new("RGBA", (2, 2), (50, 60, 70, 128)).save(png)
     assert _paa.encode(str(png), str(tmp_path / "soft.paa"), None) is None

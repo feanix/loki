@@ -121,9 +121,9 @@ fn mean_half_even(sum: u64, weights: u64) -> u8 {
 /// Bytes (alpha-weighted classes: normal maps with alpha): the exact weighted mean `sum(p*a) / sum(a)`
 /// rounded half to even; a quad whose four alphas are all 255 or all 0 is the plain byte box
 /// (`halve_chain`: R and G truncate, B rounds). Fitted to ImageToPAA `_noex` (ARGB4444 and ARGB1555)
-/// on flat and non-flat data with alpha below 255 (research/rust-deep/logs/rounding-053): every
+/// on flat and non-flat data with alpha below 255 (measured): every
 /// stored level of every mip matched, where the earlier float weights with a floor (R, G) or
-/// +0.5 floor (B) were off by one on up to 12 percent of texels (F11 of research/rust-deep/REPORT.md).
+/// +0.5 floor (B) were off by one on up to 12 percent of texels.
 fn halve_weighted(img: &Image, linear: bool) -> Image {
     halve_with(img, |px| {
         let wsum: f64 = px.iter().map(|p| p[3] as f64).sum();

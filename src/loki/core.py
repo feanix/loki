@@ -1,10 +1,10 @@
 """Loki core: decide the status of one PNG and convert it to PAA, with the built-in Loki encoder (_paa)
-or Bohemia's ImageToPAA (decision 17).
+or Bohemia's ImageToPAA.
 
 Pure functions only: no threads, no global state, no settings reads (see docs/design.md, core.py).
 Rules enforced here:
   * a PNG whose sides are not powers of two is flagged, never converted or resized, unless an output size
-    (`OutputSize`, #60) is set: then the PNG is fitted to it (Rust `resize.rs`) and the settings are recorded in outputs.json;
+    (`OutputSize`) is set: then the PNG is fitted to it (Rust `resize.rs`) and the settings are recorded in outputs.json;
   * an optional max-size cap halves oversized sides (aspect kept) into a temp file, the source is untouched;
   * a .paa whose top mip differs from what the file's own max size wants counts as stale;
   * a listed file that is gone is "missing" (it can come back), never an error;
@@ -39,7 +39,7 @@ UP_TO_DATE = "up_to_date"
 NEEDS_CONVERTING = "needs_converting"
 FLAGGED = "flagged"
 MISSING = "missing"
-PAA_IN_USE = "PAA in use"  # ConvertResult.error and row reason when the .paa target is held open (#028)
+PAA_IN_USE = "PAA in use"  # ConvertResult.error and row reason when the .paa target is held open
 IN_USE = "in_use"  # the png is locked/open elsewhere right now: transient, never a verdict on the file
 
 # Converter choices (settings) and route results. The suffix rule lives in the Rust lib, not here.
@@ -61,7 +61,7 @@ CONVERT_CPU_RESERVE = 4  # logical CPUs left for the GUI, the watcher and the OS
 
 
 def convert_workers(cpu_count: int | None = None) -> int:
-    """How many ImageToPAA processes may run at once (decision 13): the one definition of the limit."""
+    """How many ImageToPAA processes may run at once: the one definition of the limit."""
     cpu = os.cpu_count() if cpu_count is None else cpu_count
     return min(CONVERT_WORKERS_MAX, max(1, (cpu or 1) - CONVERT_CPU_RESERVE))
 
@@ -129,7 +129,7 @@ def _probe_error(path: Path, access: int) -> int | None:
 
 
 def _held_open(exc: BaseException, path: Path) -> bool:
-    """True when a failed replace of `path` (winerror 5) is really another process holding the file open (#028).
+    """True when a failed replace of `path` (winerror 5) is really another process holding the file open.
 
     The same probe as _acl_denied, asking for DELETE access: a hold answers sharing violation (32), an ACL denial 5.
     """
@@ -146,7 +146,7 @@ def _is_pow2(n: int) -> bool:
     return n > 0 and n & (n - 1) == 0
 
 
-# --- output size (0.3.1, decision 51) ----------------------------------------------------------------
+# --- output size (0.3.1) ----------------------------------------------------------------
 
 FITS = ("stretch", "contain", "pad")
 ALIGNS = ("centre", "top-left", "top", "top-right", "left", "right", "bottom-left", "bottom", "bottom-right")
@@ -315,7 +315,7 @@ def check_png(path: str | Path, max_size: int | None = None, size: OutputSize | 
         return PngEntry(path, MISSING, None, None)
     except Exception as exc:  # noqa: BLE001 -- Pillow raises several types for corrupt files
         detail = f"{type(exc).__name__}: {exc}"
-        if is_lock_error(exc) and not _acl_denied(exc, path):  # transient: the owner will release it, so it is waiting, not flagged
+        if is_lock_error(exc) and not _acl_denied(exc, path):  # transient: the program holding it will release it, so it is waiting, not flagged
             return PngEntry(path, IN_USE, "file in use", None, detail)
         # Short, path-free reason for the row; the raw exception stays in `detail`.
         if isinstance(exc, Image.DecompressionBombError):  # Pillow's own pixel limit (about 179 million), well over what Loki loads
@@ -360,7 +360,7 @@ def check_png(path: str | Path, max_size: int | None = None, size: OutputSize | 
     return PngEntry(path, UP_TO_DATE, None, png_size)
 
 
-# ImageToPAA's output limit as measured (#029): 8192x8192, 8192x2048, 2048x8192 and 8192x4096 PNGs come out
+# ImageToPAA's output limit as measured: 8192x8192, 8192x2048, 2048x8192 and 8192x4096 PNGs come out
 # as 4096x4096, 4096x1024, 1024x4096 and 4096x2048 PAAs (halved, aspect kept, until both sides <= 4096).
 IMAGETOPAA_MAX_SIDE = 4096
 

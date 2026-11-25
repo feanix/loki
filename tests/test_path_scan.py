@@ -1,4 +1,4 @@
-"""Local-path scrubbing (#32): the scanner finds planted paths, the native build remaps them away."""
+"""Local-path scrubbing: the scanner finds planted paths, the native build remaps them away."""
 
 import sys
 import zipfile

@@ -7,7 +7,7 @@ callers must fail, never skip.
 
 Each checkout gets its own cargo target dir outside the repo: CARGO_TARGET_DIR if set, else
 %LOCALAPPDATA%/Loki/cargo-target/<first 12 hex of sha1 of the checkout's absolute path>. A dir
-shared between checkouts can serve one checkout's stale loki_paa.dll to another (#30). Build +
+shared between checkouts can serve one checkout's stale loki_paa.dll to another. Build +
 copy still run under an exclusive file lock and the copy is checked for the module's init symbol.
 """
 
@@ -46,7 +46,7 @@ def target_dir(root: Path = ROOT) -> Path:
 def sources() -> list[Path]:
     """Every file whose change must rebuild the module (crate sources, manifest, lock)."""
     files = [p for p in (CRATE / "src").rglob("*") if p.is_file()]
-    files += [CRATE / "Cargo.toml", CRATE / "Cargo.lock", Path(__file__)]  # this file: its rustflags (#32)
+    files += [CRATE / "Cargo.toml", CRATE / "Cargo.lock", Path(__file__)]  # this file: its rustflags
     return files
 
 
@@ -88,7 +88,7 @@ def _cdylib_name() -> str:
 
 
 def remap_flags(tdir: Path, root: Path = ROOT, environ: dict[str, str] | None = None) -> list[str]:
-    """rustc flags that keep the builder's paths out of the binary (#32): cargo/rustup homes, checkout and
+    """rustc flags that keep the builder's paths out of the binary: cargo/rustup homes, checkout and
     target dir are remapped to neutral names, and on MSVC the .pdb path in the debug directory is cut to a file name."""
     env = os.environ if environ is None else environ
     home = Path(env.get("USERPROFILE") or Path.home())

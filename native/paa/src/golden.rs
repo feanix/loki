@@ -89,8 +89,8 @@ fn golden_hashes() {
     // `plain_soft` equals `ca_soft`, because the unsuffixed rule and `_co`/`_ca` store the same bytes
     // for those inputs (same format, FLAG and mip filter). The pairs are asserted after the loop
     // below, so a change that makes one class drift from the other fails by name.
-    // #31: co_soft, ca_soft, plain_soft, ca_near_opaque and ca_lzo were re-recorded for the AVGC tag
-    // only (the per-texel colour table of `avgc.rs`). Checked once against the pre-#31 build on a
+    // co_soft, ca_soft, plain_soft, ca_near_opaque and ca_lzo were re-recorded for the AVGC tag
+    // only (the per-texel colour table of `avgc.rs`). Checked once against the build before the AVGC change on a
     // near-opaque image: the files differ only in the three AVGC colour bytes. co_soft and plain_binary
     // were re-recorded again for the DXT1 1-bit alpha masks (`cutout.rs`: the masks of mips 1 down follow the
     // coverage of the level; mip 0 of a binary alpha is unchanged).
@@ -106,7 +106,7 @@ fn golden_hashes() {
         ("plain_soft", "", 64, 64, 2, 0xe8c95e84e6142dac),
         // nohq: the normal-map alpha chain runs first, every level (including level 0) is
         // renormalised, the swizzle comes after the chain, and the FLAG tag is set from alpha.
-        // R and G are truncated in the box chain. nohq_soft changed in #53: the alpha-weighted mean
+        // R and G are truncated in the box chain. nohq_soft changed with the fitted rounding: the alpha-weighted mean
         // is now rounded half to even (was float weights with a floor), so every partly transparent quad can differ.
         ("nohq_opaque", "nohq", 64, 64, 0, 0xb47c7caeeb59fcb1),
         ("nohq_soft", "nohq", 64, 32, 2, 0x66a114d0bb9e7e89),
@@ -134,7 +134,7 @@ fn golden_hashes() {
 
 // Detail (`dt`) and normal-map (`nohq`) classes at the two sizes that matter for them: 256 (LZO
 // applies to the top mips) and 512 (one more chain level). The first golden table has `nohq` only at
-// 64, where the whole chain is stored raw. Added by #44; recorded from the encoder as it was then; nohq_256_soft re-recorded in #53 (alpha-weighted rounding, soft alpha).
+// 64, where the whole chain is stored raw. Recorded from the encoder as it was then; nohq_256_soft re-recorded for the fitted rounding (alpha-weighted rounding, soft alpha).
 #[test]
 fn golden_hashes_detail_and_normal_maps() {
     let cases: &[(&str, &str, usize, usize, u8, u64)] = &[
@@ -157,7 +157,7 @@ fn golden_hashes_detail_and_normal_maps() {
 // solid with a single opaque texel, and a two-colour gradient with holes. Alpha must come back
 // exactly as the 128 cut-off says (transparent texels 0, opaque 255) in every block, and the bytes are
 // pinned. `Dxt1 { punch: true }` is reachable only through this direct call: `encode_file` refuses
-// 1-bit alpha for DXT1 (decision 34), so no other test reaches the 3-colour block path with holes.
+// 1-bit alpha for DXT1, so no other test reaches the 3-colour block path with holes.
 #[test]
 fn dxt1_punch_through_over_many_block_kinds() {
     use crate::dxt::{decode_image, encode_image, Format};

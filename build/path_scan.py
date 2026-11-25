@@ -1,4 +1,4 @@
-"""Find the builder's local paths inside shipped binaries (release blocker #32).
+"""Find the builder's local paths inside shipped binaries (release blocker).
 
 The public zip must not carry the builder's user name, home folder or checkout path. Needles are derived at run
 time (getpass user, USERPROFILE/home, checkout root; also the cargo target dir), matched case-insensitively, in

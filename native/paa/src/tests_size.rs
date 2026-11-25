@@ -1,4 +1,4 @@
-//! Tests for the output size (0.3.1, decision 51): geometry of each fit mode, every alignment, the
+//! Tests for the output size (0.3.1): geometry of each fit mode, every alignment, the
 //! default pad colour per class, the resampling quality (no halo, unit-length normals) and the
 //! equality of a size that is a mip level with the mip path. Inputs are generated, no fixtures.
 

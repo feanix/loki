@@ -1,4 +1,4 @@
-"""The one conversion pool (decision 13): bounded parallel ImageToPAA runs for Convert all and bake.
+"""The one conversion pool: bounded parallel ImageToPAA runs for Convert all and bake.
 
 Fixed worker threads over one queue, all state under one lock. Rules:
   * at most `workers` convert_fn calls run at once;

@@ -1,4 +1,4 @@
-"""Locked files (#015): a png held open by another program at settle time (or during convert) is retried
+"""Locked files: a png held open by another program at settle time (or during convert) is retried
 and converted once it is readable, never consumed, never converted twice, never flagged.
 
 Watcher tests use a fake clock and real share-mode-0 locks (tests/lockhelp.py); the pool is the real pool.
@@ -93,7 +93,7 @@ def drain(pool, timeout=5.0):
     assert pool.idle()
 
 
-# --- criteria 1 and 4: the advisor case, watcher + pool ---
+# --- the exporter case: watcher + pool ---
 def test_rewrite_then_lock_past_settle_converts_once_after_release(tmp_path):
     pngs, _keys, _s, rec, pool, clock, w = setup(tmp_path, n=2)
     for i, p in enumerate(pngs):

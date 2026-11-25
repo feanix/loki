@@ -186,7 +186,7 @@ fn linear_to_srgb(v: f64) -> f64 {
 
 /// AVGC value. Observed (ImageToPAA output): with `dynRange` 1 (or unset) colour is the alpha
 /// weighted mean in LINEAR light, of the stored colour `avgc::soft_colour(c, a)` of each texel
-/// (task #31: the oracle's per-texel colour for soft alpha, exact against the oracle), converted
+/// (the oracle's per-texel colour for soft alpha, exact against the oracle), converted
 /// back to sRGB; with `dynRange` 0 it is the plain mean of the bytes (data textures), weighted by
 /// alpha; alpha is always the plain mean. Taken from the source image, before any swizzle.
 /// Inferred for `dynRange` 0: the alpha weight (the closest fit on alpha textures, within 3 levels).

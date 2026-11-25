@@ -1,4 +1,4 @@
-"""core.is_lock_error is precise (#016): only sharing/lock violations count, not access denied."""
+"""core.is_lock_error is precise: only sharing/lock violations count, not access denied."""
 
 import getpass
 import shutil

@@ -1,9 +1,8 @@
-"""The command-line help screens (#59): examples, exit codes and the guide link stay true.
+"""The command-line help screens: examples, exit codes and the guide link stay true.
 
 Runs loki.cli.main in-process; ImageToPAA is never needed. Example commands in the help are parsed, never run.
 """
 
-import re
 import shlex
 from pathlib import Path
 
@@ -13,7 +12,7 @@ from PIL import Image
 from loki import cli, core
 
 ROOT = Path(__file__).resolve().parent.parent
-GUIDE = "Full guide: https://github.com/feanix/loki#command-line"
+GUIDE = "Full guide: https://github.com/feanix/loki/blob/main/docs/CLI.md"
 
 
 @pytest.fixture(autouse=True)
@@ -42,11 +41,9 @@ def test_help_screen_ends_with_the_guide_link_and_convert_help_is_the_same(capsy
     assert len(out.splitlines()) <= 60
 
 
-def test_guide_anchor_matches_the_readme_heading():
-    anchor = GUIDE.rsplit("#", 1)[1]
-    readme = (ROOT / "README.md").read_text(encoding="utf8")
-    slugs = [re.sub(r"[^a-z0-9 -]", "", h.lower()).replace(" ", "-") for h in re.findall(r"^#+ (.+)$", readme, re.MULTILINE)]
-    assert anchor in slugs and cli.GUIDE_LINE == GUIDE
+def test_guide_link_points_at_the_cli_doc():
+    path = GUIDE.split("/blob/main/", 1)[1]
+    assert (ROOT / path).is_file() and cli.GUIDE_LINE == GUIDE
 
 
 def test_help_has_sentence_short_form_and_convert_note(capsys):
@@ -100,13 +97,13 @@ def test_exit_codes_match_behaviour(tmp_path, capsys):
     assert run(capsys, "convert", str(good), "--bogus")[0] == 2  # 2: bad option
 
 
-def test_readme_has_the_powershell_run_line():
-    readme = (ROOT / "README.md").read_text(encoding="utf8")
-    assert ".\\Loki-cli.exe" in readme and "add the folder to PATH" in readme
+def test_cli_doc_has_the_powershell_run_line():
+    doc = (ROOT / "docs" / "CLI.md").read_text(encoding="utf8")
+    assert ".\\Loki-cli.exe" in doc and "add the folder to PATH" in doc
 
 
-def test_readme_command_line_section_matches_help_exit_codes():
-    readme = " ".join((ROOT / "README.md").read_text(encoding="utf8").split())
+def test_cli_doc_exit_codes_match_help():
+    doc = " ".join((ROOT / "docs" / "CLI.md").read_text(encoding="utf8").split())
     for line in cli.EXIT_CODE_LINES:
         code, text = line.split("  ", 1)
-        assert f"{code} {text}" in readme, line
+        assert f"{code} {text}" in doc, line

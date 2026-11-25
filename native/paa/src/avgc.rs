@@ -1,6 +1,6 @@
 //! The AVGC (average colour) value of ImageToPAA for the classes with `dynRange` 1 or unset.
 //!
-//! Observed (task #31, `research/paa-encoder/ALPHA31.md`): ImageToPAA does not average the plain
+//! Observed: ImageToPAA does not average the plain
 //! colour of a texel. It first turns every texel (colour byte `c`, alpha byte `a`) into a stored
 //! colour `F(c, a)`, then takes the mean of those in LINEAR light weighted by alpha, and converts the
 //! mean back to sRGB. `F` is the premultiplied byte `P = floor(c * a / 255)` taken back to linear
@@ -11,7 +11,7 @@
 //! It depends only on `(a, P)`, so the table holds one byte per `(a, P)`: 32,896 bytes.
 //!
 //! Checked against the oracle on flat colours x every alpha, on mixes of two texel kinds (the mean
-//! is alpha weighted over texels), on generated soft-alpha art and on owner soft-alpha copies:
+//! is alpha weighted over texels), on generated soft-alpha art and on real soft-alpha textures:
 //! every channel within 1 level.
 
 /// `F` for `a` in 0..=255 and `P` in 0..=`a`, at index `a * (a + 1) / 2 + P`.

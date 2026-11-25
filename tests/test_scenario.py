@@ -1,6 +1,6 @@
 """Scenario runner tests: `python -m loki --scenario` in a subprocess, asserting digest lines.
 
-One test per acceptance criterion of #009 where it is observable headlessly (drop goes through
+One test per behaviour that is observable headlessly (drop goes through
 App.add_files, the same handler the OS drop calls). The converter is a fake .bat tool that writes a PAA
 header sized like its source png and fails for files named badcopy*, plus real-tool tests that skip
 without Arma 3 Tools.

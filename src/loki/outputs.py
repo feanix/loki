@@ -1,4 +1,4 @@
-"""Loki's own record of the output settings it used (#60, decision 55): %APPDATA%\\Loki\\outputs.json.
+"""Loki's own record of the output settings it used: %APPDATA%\\Loki\\outputs.json.
 
 The PAA carries no tag for it (shipped files hold only the standard tags), so "was this .paa made with these
 --size settings?" is answered from here. One entry per .paa:

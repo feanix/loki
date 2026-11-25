@@ -151,7 +151,7 @@ fn classify_table() {
     assert_eq!(ok("rock_").class, "(none)");
 }
 
-/// #054: ImageToPAA gave `_foo _xyz _co2 _nrm _caa _cox _nohq2` the unsuffixed output. One owner
+/// ImageToPAA gave `_foo _xyz _co2 _nrm _caa _cox _nohq2` the unsuffixed output. One place
 /// (`rules::for_suffix`) says so; classify, supported and encode follow it.
 #[test]
 fn unknown_suffix_is_the_default_rule() {
@@ -181,7 +181,7 @@ fn supported_follows_the_verified_rules() {
         ("rock_smdi.png", true),
         ("rock_sky.png", true),
         ("rock_cat.png", false),
-        // Unknown suffixes get the default rule (#054), which ImageToPAA applies too.
+        // Unknown suffixes get the default rule, which ImageToPAA applies too.
         ("rock_foo.png", true),
         ("rock_.png", true),
         ("rock_co2.png", true),

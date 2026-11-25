@@ -1,4 +1,4 @@
-"""Output size (#60, decision 51): --size with --fit, --pad-colour and --pad-align, in core and on the command line.
+"""Output size: --size with --fit, --pad-colour and --pad-align, in core and on the command line.
 
 Runs loki.cli.main in-process with the real Loki encoder; ImageToPAA is faked (the hand-over test) or never
 needed. The pixel geometry, resampling quality and mip equality are proven in native/paa/src/tests_size.rs;
@@ -406,7 +406,7 @@ def test_handover_without_a_size_is_as_before(tmp_path, monkeypatch):
 
 def test_help_and_readme_document_the_options_and_the_four_defaults(capsys):
     root = Path(__file__).resolve().parent.parent
-    readme = " ".join((root / "README.md").read_text(encoding="utf8").split())
+    readme = " ".join((root / "docs" / "CLI.md").read_text(encoding="utf8").split())  # the option reference
     _code, out, _ = run(capsys, "--help")
     help_text = " ".join(out.split())
     for opt in ("--size", "--fit", "--pad-colour", "--pad-align"):

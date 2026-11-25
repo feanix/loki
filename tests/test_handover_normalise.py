@@ -1,8 +1,8 @@
-"""ImageToPAA hand-over input (#043, decision 46): grey, 16-bit and palette PNGs go to the tool as 8-bit RGB(A),
+"""ImageToPAA hand-over input: grey, 16-bit and palette PNGs go to the tool as 8-bit RGB(A),
 and a 4096x4096 DXT5 whose mip 0 overflows the PAA length field says so (no hand-over).
 
 Why: ImageToPAA mangles grey and low-depth PNGs, fails 16-bit RGBA / grey+alpha / palette+tRNS, and ignores tRNS
-colour keys (the #040 deep scan, findings F1 to F3). The real-tool tests are skipped when Arma 3 Tools is absent.
+colour keys (the deep scan, findings F1 to F3). The real-tool tests are skipped when Arma 3 Tools is absent.
 Inputs are generated here; the PAA is read back with the crate's own decoder (`paa-proto decode`)."""
 
 import math
@@ -183,7 +183,7 @@ def psnr_and_alpha_shift(got, ideal) -> tuple[float, float]:
 @pytest.mark.parametrize(("name", "suffix", "build", "hands_over"), CASES, ids=lambda v: v if isinstance(v, str) else "")
 def test_imagetopaa_gets_8bit_rgb_and_the_paa_matches_the_ideal(tmp_path, paa_proto, name, suffix, build, hands_over, capsys):
     """A PAA is written and decodes to within 35 dB and 2 alpha levels of the ideal pixels: by real ImageToPAA with the
-    Bohemia converter, and (`hands_over`: the cases Loki handed over before #31) by Loki's own encoder."""
+    Bohemia converter, and (`hands_over`, the cases Loki handed over before) by Loki's own encoder."""
     for converter in (core.BOHEMIA, core.LOKI) if hands_over else (core.BOHEMIA,):
         png = tmp_path / converter / f"{name}{suffix}.png"
         png.parent.mkdir()
@@ -191,7 +191,7 @@ def test_imagetopaa_gets_8bit_rgb_and_the_paa_matches_the_ideal(tmp_path, paa_pr
         before = png.read_bytes()
         res = core.convert(png, TOOL, None, converter)
         assert res.ok, res.error
-        assert res.converter == converter  # #31: no alpha file is handed over, the Loki converter encodes it itself
+        assert res.converter == converter  # no alpha file is handed over, the Loki converter encodes it itself
         assert png.read_bytes() == before  # the source is never modified
         got = decode(paa_proto, png.with_suffix(".paa"), png.parent / "back.png")
         psnr, shift = psnr_and_alpha_shift(got, dxt1_ideal(ideal) if suffix == "_co" else ideal)
@@ -252,7 +252,7 @@ def test_resize_and_normalise_share_one_copy(tmp_path):
 
 
 def test_incompressible_4096_dxt5_has_its_own_message_and_no_handover(tmp_path, monkeypatch):
-    """The #040 mip-too-large case: 4096x4096 RGBA noise as _nohq (DXT5) is 1 byte over the 24-bit mip length field."""
+    """The mip-too-large case: 4096x4096 RGBA noise as _nohq (DXT5) is 1 byte over the 24-bit mip length field."""
     png = tmp_path / "noise_nohq.png"
     im = Image.frombytes("RGBA", (4096, 4096), os.urandom(4096 * 4096 * 4))
     im.save(png, compress_level=0)
@@ -271,7 +271,7 @@ def test_incompressible_4096_dxt5_has_its_own_message_and_no_handover(tmp_path, 
 
 
 def test_incompressible_8192_dxt5_is_halved_and_then_has_the_mip_too_large_message(tmp_path, monkeypatch):
-    """#55: the 4096 DXT5 overflow message still applies after an 8192 PNG is halved to 4096 (256 MiB noise PNG)."""
+    """The 4096 DXT5 overflow message still applies after an 8192 PNG is halved to 4096 (256 MiB noise PNG)."""
     png = tmp_path / "noise_nohq.png"
     Image.frombytes("RGBA", (8192, 8192), os.urandom(8192 * 8192 * 4)).save(png, compress_level=0)
     called = []

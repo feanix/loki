@@ -196,7 +196,7 @@ def test_removed_file_is_no_longer_watched_and_is_baselined_again_on_return(tmp_
     assert rec.calls == []
 
 
-# --- per-row cap (D10) ---
+# --- per-row cap ---
 def test_each_row_converts_at_its_own_cap_and_edits_apply_next_pass(tmp_path):
     folder, s, clock, rec, w = make(tmp_path)
     off = mk(folder / "off.png", (512, 256))
@@ -333,7 +333,7 @@ def test_status_uses_the_rows_cap(tmp_path):
     assert w.entries[0].reason == "PAA is 512x256, max size wants 256x128"
 
 
-# --- bake goes through the pool (decision 13) ---
+# --- bake goes through the pool ---
 def test_files_saved_together_convert_concurrently_through_the_pool(tmp_path):
     folder = tmp_path / "tex"
     folder.mkdir()

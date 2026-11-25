@@ -145,7 +145,7 @@ def test_thread_safe_snapshot_while_editing(tmp_path):
 
 
 def test_a_0_3_0_settings_file_keeps_every_rows_toggle_after_the_auto_watch_rename(tmp_path):
-    """The key stays "bake" on disk (decision 49 renames only what the user sees): a 0.3.0 file loads intact."""
+    """The key stays "bake" on disk (renames only what the user sees): a 0.3.0 file loads intact."""
     p = tmp_path / "v030.json"
     rows = [("a.png", 256, True, "loki"), ("b.png", None, False, "bohemia"), ("c.png", 1024, True, None)]
     p.write_text(

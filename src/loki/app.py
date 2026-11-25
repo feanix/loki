@@ -1,10 +1,10 @@
 """GUI model/controller for Loki. Imports no tkinter: the window (gui.py) and the headless scenario
 runner (__main__.py) both drive this class, so every behaviour is testable without a display.
 
-The list is the files the artist dragged in (decision 11). Nothing here scans a folder.
+The list is the files the artist dragged in. Nothing here scans a folder.
 
 Threading: the watcher thread and the conversion pool's workers never touch state. They post events to a
-queue.Queue; the owner (the Tk loop via after(), or the scenario runner) calls `pump()` to apply them.
+queue.Queue; the caller (the Tk loop via after(), or the scenario runner) calls `pump()` to apply them.
 So all state is mutated on one thread and needs no locks. Events carry a generation number, bumped
 when the app closes, so a late event from a stopped worker is dropped.
 
@@ -41,7 +41,7 @@ SOURCE = "Source"  # the output size cell and dropdown text for "no output size"
 MAX_REPLACED_HINT = "Max size replaces the output size: output size set to Source."
 SIZE_REPLACED_HINT = "Output size replaces the max size: max size set to Off."
 SORT_ARROWS = {False: " ▲", True: " ▼"}  # appended to the sorted column's header: ascending, descending
-# Status groups in ascending order: problems first (decision 49; Missing sits after errors, it needs the user too).
+# Status groups in ascending order: problems first (Missing sits after errors, it needs the user too).
 STATUS_ORDER = ("error", core.MISSING, core.FLAGGED, core.NEEDS_TOOL, core.NEEDS_CONVERTING, core.IN_USE, "converting")
 
 
@@ -208,7 +208,7 @@ class App:
         self.tool: Path | None = None
         self.tool_error: str | None = None
         self._errors: dict[str, tuple[tuple[int, int] | None, str]] = {}  # key -> (file sig, text)
-        self._needs_tool_keys: set[str] = set()  # keys whose _errors text is a per-file "needs Arma 3 Tools (...)" (#025)
+        self._needs_tool_keys: set[str] = set()  # keys whose _errors text is a per-file "needs Arma 3 Tools (...)"
         self._waiting: dict[str, tuple[int, int] | None] = {}  # key -> file sig of a save locked during convert
         self._wait_why: dict[str, str] = {}  # key -> what it waits on ("file in use", "PAA in use")
         self._gen = 0
@@ -221,7 +221,7 @@ class App:
             core.convert_workers() if workers is None else workers,
             on_result=lambda key, tags, res: self.events.put(("result", gen, key, tags, res)),
         )
-        self._order: list[str] = []  # row keys in display order; only a re-sort changes it (#57)
+        self._order: list[str] = []  # row keys in display order; only a re-sort changes it
         self._refresh_tool()
         self._rebuild_rows(resort=True)  # the order at start
         self._watcher = Watcher(
@@ -320,7 +320,7 @@ class App:
             gone = [r.key for r in self.rows if r.key in keys]
             if gone:
                 self.settings.remove_files(gone)
-                for k in self._pool.cancel(gone):  # not started yet: never converted (#010 crit 1)
+                for k in self._pool.cancel(gone):  # not started yet: never converted
                     if k in self._all_pending:
                         self._all_pending.discard(k)
                         self._all_total -= 1
@@ -367,7 +367,7 @@ class App:
         return f"{COLUMNS[SORT_COLUMNS.index(col)]} {'desc' if desc else 'asc'}"
 
     def set_max_size(self, keys: Iterable[str], value: int | None) -> None:
-        """Set the cap of the given rows only; their status is re-evaluated against it (D10)."""
+        """Set the cap of the given rows only; their status is re-evaluated against it."""
         try:
             if value not in MAX_CHOICES:
                 raise ValueError(f"unsupported max size: {value}")

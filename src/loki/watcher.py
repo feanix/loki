@@ -4,14 +4,14 @@ Stdlib polling (no watchdog) so temp/rename saves and multi-step writes are hand
 a png is "pending" when its (mtime_ns, size) differs from the last consumed signature, and it is
 acted on only after the signature has been unchanged for `settle` seconds. The watched set is the
 settings file list, re-read every pass (adds, removes and cap edits apply on the next pass). The
-first time a file is seen its signature is baselined, never converted (decision 11: adding a file
+first time a file is seen its signature is baselined, never converted (adding a file
 writes nothing). A pending png that settles with its toggle off, or flagged, is consumed without
 converting, so flipping the toggle later does not retroactively bake an old save; only a new save does.
 A listed file that vanishes and returns counts as a new save. A file removed from the list is forgotten.
 A save whose png is locked (in_use) when it settles is not consumed: it is re-checked with backoff and
-submitted once readable (#015); `retry` does the same for a submitted save whose convert hit a lock.
-The watcher never converts itself: a settled save is handed to `submit` (the conversion pool, decision 13)
-and its result comes back to the owner through the pool, not through this class.
+submitted once readable; `retry` does the same for a submitted save whose convert hit a lock.
+The watcher never converts itself: a settled save is handed to `submit` (the conversion pool)
+and its result comes back to the caller through the pool, not through this class.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ RETRY_SLOW = 5.0  # after that, at most one check per this many seconds
 
 
 def backoff_due(since: float, last: float, now: float, fast: float = RETRY_FAST, slow: float = RETRY_SLOW) -> bool:
-    """The one backoff schedule (#015), shared with the CLI: a wait that began at `since` is due every pass for
+    """The one backoff schedule, shared with the CLI: a wait that began at `since` is due every pass for
     `fast` seconds, then at most once per `slow` seconds after the check at `last`."""
     return now - since < fast or now - last >= slow
 

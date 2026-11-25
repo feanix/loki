@@ -99,7 +99,7 @@ def test_non_pow2_flagged_with_reason(tmp_path):
         (4096, 1, 256, (256, 1)),
         (2048, 1024, None, (2048, 1024)),
         (4096, 64, 512, (512, 8)),
-        # #029: ImageToPAA's measured 4096 output limit, also with max size off; a lower cap still wins
+        # ImageToPAA's measured 4096 output limit, also with max size off; a lower cap still wins
         (8192, 8192, None, (4096, 4096)),
         (8192, 2048, None, (4096, 1024)),
         (2048, 8192, None, (1024, 4096)),
@@ -215,7 +215,7 @@ def _denied(winerror=5):
 
 
 def test_convert_rides_out_a_brief_hold_on_the_old_paa(tmp_path, monkeypatch):
-    """#27: a reader holding the old .paa makes os.replace fail with winerror 5 for a few ms; not an error."""
+    """A reader holding the old .paa makes os.replace fail with winerror 5 for a few ms; not an error."""
     png = mk(tmp_path / "h.png")
     real_replace, calls = os.replace, []
 
@@ -257,7 +257,7 @@ def test_convert_missing_tool_and_missing_png_do_not_raise(tmp_path):
     assert sorted(p.name for p in tmp_path.iterdir()) == ["g.png"]
 
 
-# --- #006: paa_size and size-aware status ---
+# --- paa_size and size-aware status ---
 def test_paa_size_parses_header_variants(tmp_path):
     p = tmp_path / "a.paa"
     for lzo in (True, False):
@@ -342,7 +342,7 @@ def test_paa_size_random_garbage_is_a_tuple_or_none(tmp_path):
 
 
 def test_load_limit_advice_matches_the_rust_message():
-    """The Pillow bomb row and the Rust loader refusal give the same advice (one wording, #55)."""
+    """The Pillow bomb row and the Rust loader refusal give the same advice (one wording)."""
     src = (Path(__file__).parent.parent / "native" / "paa" / "src" / "img.rs").read_text(encoding="utf-8")
     tail = core.LOAD_LIMIT_ADVICE.removeprefix("too big to load ")
     assert "is too big to load " + tail.replace("16384", "{MAX_LOAD_SIDE}") in src

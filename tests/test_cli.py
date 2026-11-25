@@ -1,4 +1,4 @@
-"""The command line (#018): inputs, routing, output lines, exit codes and the held-.paa wait (criterion 8).
+"""The command line: inputs, routing, output lines, exit codes and the held-.paa wait.
 
 Runs loki.cli.main in-process with the real Loki encoder; ImageToPAA is never needed (find_imagetopaa is
 patched to "absent"), and a real CreateFileW hold stands in for TexView or an exporter.
@@ -154,12 +154,12 @@ def test_help_handover_suffixes_are_ones_the_encoder_rejects(capsys):
     text = " ".join(out.split())
     assert "ImageToPAA" in text
     named = re.findall(r"(?<![\w])(_[a-z]+)\b", cli.HANDOVER_CASES)
-    assert {"_cat", "_can", "_non"} <= set(named)  # `_sky` is encoded by Loki since #31
+    assert {"_cat", "_can", "_non"} <= set(named)  # `_sky` is encoded by Loki
     for s in named:
         assert not _paa.supported(f"x{s}.png"), s
-    assert "unknown suffix" not in text  # encoded by Loki since #054
-    intro = text.split("positional arguments")[0]  # the hand-over sentence; the --size help names 4096 as a limit (#60)
-    assert "4096" not in cli.HANDOVER_CASES and "4096" not in intro  # a PNG over 4096 is halved by Loki since #55
+    assert "unknown suffix" not in text  # unknown suffixes are encoded by Loki
+    intro = text.split("positional arguments")[0]  # the hand-over sentence; the --size help names 4096 as a limit
+    assert "4096" not in cli.HANDOVER_CASES and "4096" not in intro  # a PNG over 4096 is halved by Loki
     assert _paa.supported("x_zzz.png")
 
 
@@ -212,7 +212,7 @@ def test_windowed_exe_dev_options_are_not_routed_to_the_pointer(capsys):
     assert exc.value.code == 0 and "--screenshot" in capsys.readouterr().out
 
 
-# --- #62: convert is the default action, the word `convert` still accepted ---
+# --- convert is the default action, the word `convert` still accepted ---
 
 def test_short_and_convert_forms_give_identical_results(tmp_path, capsys):
     for name, size in (("wall_co.png", (128, 128)), ("odd_co.png", (30, 20)), ("rock_cat.png", (64, 64))):
@@ -253,7 +253,7 @@ def test_a_folder_named_convert_is_an_input_unless_it_is_the_bare_first_word(tmp
     assert run(capsys, "convert", "convert")[0] == 0  # command, then the folder named convert
 
 
-# --- criterion 8: the output .paa is held open by another program ---
+# --- the output .paa is held open by another program ---
 
 def held_setup(tmp_path):
     p = png(tmp_path / "a_co.png")

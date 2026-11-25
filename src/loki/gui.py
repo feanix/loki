@@ -506,7 +506,7 @@ def screenshot(
         raise SystemExit("--screenshot needs Windows (PrintWindow)")
     app = App(settings_path, interval=0.1, settle=0.3)
     win = MainWindow(app)
-    # Offscreen so the owner's desktop is never disturbed; no focus_force, no lift. A fully
+    # Offscreen so the user's desktop is never disturbed; no focus_force, no lift. A fully
     # offscreen window paints no client area under DWM; a near-transparent layered one does.
     win.root.attributes("-alpha", 0.01)
     win.root.geometry("960x560+-4000+-4000")

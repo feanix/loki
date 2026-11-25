@@ -56,26 +56,33 @@ def test_icon_present():
 
 
 def test_version_is_one_value_everywhere():
-    assert loki.__version__ == "0.3.1"
+    assert loki.__version__ == "0.3.2"
     assert f'version = "{loki.__version__}"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
 
 
 def test_readme_features_and_license_wording():
     text = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert "## The built-in converter" in text and "## Command line" in text and "Loki-cli.exe" in text
-    assert "## Known limits" in text or "### Known limits" in text
-    for needle in ("soft alpha", "hair cards", "0.3.1", "SmartScreen", "SHA256SUMS", "Issues", "source-available"):
+    assert "## Command line" in text and "## Known limits" in text and "Loki-cli.exe" in text
+    for needle in ("Soft transparency", "Windows protected your PC", "SHA256SUMS", "Issues", "Source-available"):
         assert needle in text, needle
-    assert "source-available (free to use, open code), not open source" in text
+    converter = (ROOT / "docs" / "CONVERTER.md").read_text(encoding="utf-8")
+    assert "## Known limits" in converter
+    for needle in ("Soft alpha", "hair cards", "57 files"):
+        assert needle.lower() in converter.lower(), needle
+    assert len(text.splitlines()) <= 90 and len(text.split()) <= 900  # the README stays short; details live in docs/
     assert "written permission from Astrid Winters" in text
-    assert "paid games and mods" in text
+    # The full licence wording lives in CONTRIBUTING.md and LICENSE.
+    contributing = (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
+    assert "source-available (free to use, open code), not open source" in contributing
+    assert "written permission from Astrid Winters" in contributing
+    assert "paid games and mods" in contributing
 
 
-def test_readme_suffix_lists_match_the_encoder():
-    """The Loki-converter list in the README is exactly what _paa.supported says; the named fallbacks are not."""
+def test_converter_doc_suffix_lists_match_the_encoder():
+    """The Loki-converter list in docs/CONVERTER.md is exactly what _paa.supported says; the named fallbacks are not."""
     from loki import _paa
 
-    text = (ROOT / "README.md").read_text(encoding="utf-8")
+    text = (ROOT / "docs" / "CONVERTER.md").read_text(encoding="utf-8")
     line = next(ln for ln in text.splitlines() if ln.startswith("- **Loki converter**: a name with no suffix"))
     listed = re.findall(r"`((?:_[a-z0-9]+ )+_[a-z0-9]+)`", line)[0].split()
     assert len(listed) == len(set(listed))
@@ -83,11 +90,11 @@ def test_readme_suffix_lists_match_the_encoder():
         assert _paa.supported(f"x{s}.png"), s
     for s in ("_cat", "_can", "_non"):
         assert not _paa.supported(f"x{s}.png"), s
-    assert _paa.supported("x_sky.png")  # verified under the relative checks (#31), so it is in the list above
-    assert _paa.supported("x_zzz.png")  # an unknown suffix gets the default rule (#054), so it is not a fallback
+    assert _paa.supported("x_sky.png")  # verified against ImageToPAA, so it is in the list above
+    assert _paa.supported("x_zzz.png")  # an unknown suffix gets the default rule, so it is not a fallback
     rules = (ROOT / "native" / "paa" / "src" / "rules.rs").read_text(encoding="utf-8")
     accepted = {f"_{n}" for n in set(re.findall(r"\*_([A-Za-z0-9]+)\.\*", rules)) if _paa.supported(f"x_{n}.png")}
-    assert accepted == set(listed)  # nothing the encoder takes is missing from the README
+    assert accepted == set(listed)  # nothing the encoder takes is missing from the doc
     assert _paa.supported("x.png")
 
 
@@ -104,18 +111,22 @@ def test_release_zip_name_and_members():
         assert (ROOT / name).is_file()
 
 
-def test_readme_handover_statements_name_exactly_what_the_help_names():
-    """#56: the hand-over list is one list: README Known limits, "The built-in converter", "Command line" and the
+def test_handover_statements_name_exactly_what_the_help_names():
+    """The hand-over list is one list: the README Known limits, docs/CONVERTER.md (twice), docs/CLI.md and the
     --help sentence name the same suffixes (and no others), which are the ones the encoder refuses."""
     from loki import _paa, cli
 
-    text = (ROOT / "README.md").read_text(encoding="utf-8")
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    converter = (ROOT / "docs" / "CONVERTER.md").read_text(encoding="utf-8")
+    cli_doc = (ROOT / "docs" / "CLI.md").read_text(encoding="utf-8")
     want = set(re.findall(r"_[a-z]+", cli.HANDOVER_CASES))
     assert want == {"_cat", "_can", "_non"}
-    known = next(ln for ln in text.splitlines() if ln.startswith("The Loki converter writes every texture type itself"))
-    auto = next(ln for ln in text.splitlines() if ln.startswith("- **ImageToPAA** (automatic"))
-    cmdline = next(ln for ln in text.splitlines() if ln.startswith("The built-in converter does most files."))
-    for line in (known, auto, cmdline):
+    short = next(ln for ln in readme.splitlines() if ln.startswith("- `_cat`, `_can` and `_non`"))
+    assert "ImageToPAA" in short
+    known = next(ln for ln in converter.splitlines() if ln.startswith("The Loki converter writes every texture type itself"))
+    auto = next(ln for ln in converter.splitlines() if ln.startswith("- **ImageToPAA** (automatic"))
+    cmdline = next(ln for ln in cli_doc.splitlines() if ln.startswith("The built-in converter does most files."))
+    for line in (short, known, auto, cmdline):
         named = set(re.findall(r"`(_[a-z]+)`", line))
         assert named == want, line
     for s in want:

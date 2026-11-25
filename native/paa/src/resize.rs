@@ -1,5 +1,5 @@
-//! Output size (0.3.1, decision 51): fit a loaded image to a `w` x `h` output, with a fit mode, a pad
-//! colour and an alignment. The one owner of this geometry and resampling: `encode_file` uses it, and
+//! Output size (0.3.1): fit a loaded image to a `w` x `h` output, with a fit mode, a pad
+//! colour and an alignment. The one place for this geometry and resampling: `encode_file` uses it, and
 //! `fit_png` (the `_paa` module) writes the same pixels as an 8-bit PNG for an ImageToPAA hand-over.
 //!
 //! * `Stretch`: scale to exactly `w` x `h`.

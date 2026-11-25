@@ -1,4 +1,4 @@
-"""The built-in Loki converter (decision 17, #017): routing, in-process conversion through core.convert and
+"""The built-in Loki converter: routing, in-process conversion through core.convert and
 the app's pool, the converter choice and its persistence, and the no-ImageToPAA behaviour."""
 
 import json
@@ -59,13 +59,13 @@ def by_name(app):
         ("a.png", core.LOKI, False, core.LOKI),
         ("a_cat.png", core.LOKI, True, core.BOHEMIA),
         ("a_cat.png", core.LOKI, False, core.NEEDS_TOOL),
-        ("a_sky.png", core.LOKI, False, core.LOKI),  # #31: `_sky` passes the relative checks, Loki encodes it
+        ("a_sky.png", core.LOKI, False, core.LOKI),  # `_sky` passes the relative checks, Loki encodes it
         ("a_co.png", core.BOHEMIA, True, core.BOHEMIA),
         ("a_co.png", core.BOHEMIA, False, core.NEEDS_TOOL),
     ],
 )
 def test_route(name, converter, tool, want):
-    """Size plays no part: a PNG over 4096 is Loki's too (#55)."""
+    """Size plays no part: a PNG over 4096 is Loki's too."""
     assert core.route(name, converter, tool) == want
 
 
@@ -105,7 +105,7 @@ def test_loki_sends_other_suffixes_to_the_tool_but_encodes_a_huge_png_itself(tmp
     assert res.ok and res.converter == core.BOHEMIA
     huge = tmp_path / "big_co.png"
     Image.new("RGB", (8192, 64), (90, 120, 150)).save(huge)
-    res = core.convert(huge, None, None, core.LOKI)  # no tool: Loki halves it to 4096 (#55)
+    res = core.convert(huge, None, None, core.LOKI)  # no tool: Loki halves it to 4096
     assert res.ok and res.converter == core.LOKI and core.paa_size(huge.with_suffix(".paa")) == (4096, 32)
     res = core.convert(huge, None, 1024, core.LOKI)  # the user's max size applies on top
     assert res.ok and core.paa_size(huge.with_suffix(".paa")) == (1024, 8) == core.target_size(8192, 64, 1024)

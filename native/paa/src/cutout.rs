@@ -1,7 +1,6 @@
 //! The 1-bit alpha mask of a DXT1 texture (a "cut-out"): which texels stay opaque.
 //!
-//! ImageToPAA does not threshold the alpha of a DXT1 mip. It dithers it (task #31,
-//! `research/paa-encoder/ALPHA31.md`): in every 4x4 block the opaque texels are the highest-alpha ones
+//! ImageToPAA does not threshold the alpha of a DXT1 mip. It dithers it: in every 4x4 block the opaque texels are the highest-alpha ones
 //! (every block measured is monotone in alpha), their number follows the block's summed alpha, and
 //! the opaque share of a mip stays near the mean alpha of the mip. The exact rule (which texel flips,
 //! and where) depends on the position and the neighbours and was NOT reverse engineered: a ramp gives
@@ -17,7 +16,7 @@
 //!   same count.
 //!
 //! On art whose alpha is mostly 0 or 255 (hair cards, foliage, fences) that is a plain threshold at 128
-//! at mip 0 (99.65 percent of the texels of an owner hair card agree with the oracle) and it keeps the
+//! at mip 0 (99.65 percent of the texels of a real hair-card texture agree with the oracle) and it keeps the
 //! coverage down the chain, where a fixed threshold of 128 lets the small mips fade out.
 
 /// A block of one alpha is opaque from this alpha up. Observed on flat images: 4 and above opaque,

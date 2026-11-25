@@ -187,7 +187,7 @@ fn unreplicable_rules_refuse_to_encode_and_never_route() {
 }
 
 /// Suffixes that still go to ImageToPAA because their output could not be matched: the noise filters are not
-/// replicated (`sky` joined the verified ones in #31: it passes the relative mip 2 check of #49).
+/// replicated (`sky` joined the verified ones in, it passes the relative mip 2 check of).
 const ROUTED_TO_IMAGETOPAA: [&str; 3] = ["cat", "can", "non"];
 
 #[test]
@@ -715,10 +715,10 @@ fn chain_box_truncates_r_and_g_and_rounds_b_and_a() {
     assert_eq!(mipfilter::next_mip(&img, None, false).rgba, [0, 0, 1, 1]);
 }
 
-// --- no hand-over for alpha (decision 47, #31) -------------------------------------------------------
+// --- no hand-over for alpha -------------------------------------------------------
 
-// Decision 34 had a per-file refusal for DXT1 1-bit alpha and for soft alpha (AVGC). #31 reproduced the soft
-// alpha AVGC exactly and encodes the 1-bit mask with its own deterministic threshold, and decision 47 allows
+// Loki once refused DXT1 1-bit alpha and soft alpha (AVGC) per file. It now reproduces the soft
+// alpha AVGC exactly and encodes the 1-bit mask with its own deterministic threshold, and a hand-over is allowed
 // a hand-over only when Loki cannot produce a valid file. So every class of the oracle table, at every alpha
 // kind (opaque, soft ramp, 0/255), encodes here, and ImageToPAA's own FLAG and type words come out equal
 // (`structure_equals_imagetopaa_for_every_suffix`); a refusal is left only for the noise filters.
@@ -745,7 +745,7 @@ fn every_class_encodes_every_alpha_kind_without_a_hand_over() {
 }
 
 // `Rule::linear_mips` and `dynRange` say the same thing on every verified row (the two rows that
-// differ, `ColorAlphaTest` and `AddAlphaNoise`, are not verified). REPORT F16 / part C2 D-C2-10.
+// differ, `ColorAlphaTest` and `AddAlphaNoise`, are not verified).
 #[test]
 fn linear_mips_is_dyn_range_not_zero_on_every_verified_row() {
     for r in RULES.iter().filter(|r| r.verified).chain([&rules::PLAIN]) {

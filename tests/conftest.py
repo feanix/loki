@@ -1,7 +1,7 @@
 """Shared Tk helpers. A Tk that cannot start must FAIL the run (a silent skip hides GUI regressions);
 set LOKI_ALLOW_TK_SKIP=1 to turn that failure into a skip (headless boxes).
 
-Root cause of the old intermittent "Can't find a usable init.tcl" (task #7): pytest's default fd-level
+Root cause of the old intermittent "Can't find a usable init.tcl": pytest's default fd-level
 capture (--capture=fd) made Tk init fail ~40% of runs on Windows (0 of 60 with -s or --capture=sys).
 pyproject.toml therefore pins addopts --capture=sys. Do not pass --capture=fd."""
 
@@ -59,7 +59,7 @@ def track_app(app):
 
 @pytest.fixture(autouse=True)
 def outputs_store(tmp_path_factory, monkeypatch):
-    """Loki's outputs.json (#60) lives in a temp folder for every test, never in the real %APPDATA%."""
+    """Loki's outputs.json lives in a temp folder for every test, never in the real %APPDATA%."""
     path = tmp_path_factory.mktemp("outputs") / "outputs.json"
     monkeypatch.setenv("LOKI_OUTPUTS", str(path))
     return path

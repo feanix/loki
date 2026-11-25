@@ -1,4 +1,4 @@
-//! Tests for images with a side under 4 px (0.3.1, finding F4 of the #40 deep scan).
+//! Tests for images with a side under 4 px (0.3.1, finding F4 of the deep scan).
 //!
 //! What ImageToPAA does there (observed on 40 classes, sizes 1x1, 2x2, 1x256, 256x1, 4x1, alpha
 //! opaque, 0/255 and soft):
@@ -8,8 +8,7 @@
 //!   alpha (the forced ARGB/AI88 classes keep their own format), FLAG as for larger images, and a
 //!   mip chain that halves until a side is 1 (2x2 gives 2x2 and 1x1, 1x256 and 256x1 one mip).
 //!
-//! The expectations come from ImageToPAA output; the comparison table is in
-//! research/rust-deep/logs/sizes-045/README.md. Inputs here are generated, no fixtures.
+//! The expectations come from ImageToPAA output. Inputs here are generated, no fixtures.
 
 use crate::encode;
 use crate::error::Error;
@@ -226,7 +225,7 @@ fn encode_file_writes_a_small_non_dxt_file_and_leaves_nothing_for_a_dxt_refusal(
 
 #[test]
 fn encode_file_encodes_a_soft_alpha_unsuffixed_small_image() {
-    // Soft alpha on a tiny unsuffixed image goes to ARGB4444 and its AVGC is the soft alpha one (#31); no hand-over.
+    // Soft alpha on a tiny unsuffixed image goes to ARGB4444 and its AVGC is the soft alpha one; no hand-over.
     let (png, out) = (scratch("h.png"), scratch("h.png.paa"));
     crate::img::save_png(&png, &ramp(2, 2, "soft")).unwrap();
     crate::encode_file(&png, &out, None).unwrap();

@@ -1,4 +1,4 @@
-"""Hold a file locked the way an exporter does (#015): CreateFileW with share mode 0, so every other
+"""Hold a file locked the way an exporter does: CreateFileW with share mode 0, so every other
 open of the file fails with a sharing violation (WinError 32) until the handle is closed. Windows only."""
 
 import ctypes

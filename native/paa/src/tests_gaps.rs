@@ -1,12 +1,8 @@
-//! Test-gap bundle from the #40 deep scan (its report, "Merged test-gap list"),
-//! added by #44. Tests only: nothing here changes behaviour.
+//! Test-gap bundle from a deep scan of the encoder. Tests only: nothing here changes behaviour.
 //!
-//! Three kinds of test live here:
-//! * Tests that pass today. They close gaps the mutation run (part C2) found: a mutant of the
-//!   code under test survived the old suite, and each of these kills it (see
-//!   the #44 mutation log, mutants.log).
-//! * `#[ignore = "enable in #NNN"]` tests. They state the behaviour a later 0.3.1 task will
-//!   deliver and fail today; that task removes the `ignore`. Run them with `--ignored` to see them fail.
+//! Two kinds of test live here:
+//! * Tests that close gaps a mutation run found: a mutant of the code under test survived the
+//!   older suite, and each of these kills it.
 //! * The PNG-variant equivalence table. It writes each PNG variant byte by byte (bit depth,
 //!   colour type, tRNS, interlace and colour chunks exact, which the `png` crate's own encoder
 //!   cannot do) and proves the encoder treats it as the plain 8-bit RGBA of the same pixels.
@@ -292,7 +288,7 @@ fn plain_paa(case: &str, p: &Png) -> Vec<u8> {
     paa_of_png(&format!("{case}-plain"), &png_bytes(&plain))
 }
 
-// Test-gap list item 10 (F1 to F3, criterion 7): every PNG variant the encoder accepts gives the
+// Every PNG variant the encoder accepts gives the
 // same PAA as the plain 8-bit RGBA of the same pixels. ImageToPAA mangles or rejects most of these
 // (grey, 16-bit, indexed, colour key); the encoder must not. 16-bit is pinned to `v >> 8`.
 #[test]
@@ -390,7 +386,7 @@ fn load_png_matches_the_ideal_pixels_at_odd_sizes() {
     }
 }
 
-// Test-gap list item 11 (criterion 7): colour-space chunks change nothing. Neither the loader nor
+// Colour-space chunks change nothing. Neither the loader nor
 // ImageToPAA applies a gamma or a profile; the pixels go through as stored.
 #[test]
 fn colour_space_chunks_do_not_change_the_pixels() {
@@ -407,7 +403,7 @@ fn colour_space_chunks_do_not_change_the_pixels() {
         .collect::<Vec<u8>>();
     // iCCP: profile name, NUL, compression method 0, zlib stream. The profile bytes are junk (the
     // decoders must not apply or validate it, which is what is being pinned); a real v2 matrix
-    // profile gave the same result in the #40 run (part G, analyze_chunks.txt).
+    // profile gave the same result in the scan.
     let mut iccp = b"Adobe RGB\0\0".to_vec();
     iccp.extend(zlib_stored(&[0x5A; 128]));
     let sets: Vec<(&str, Vec<Chunk>)> = vec![
@@ -427,7 +423,7 @@ fn colour_space_chunks_do_not_change_the_pixels() {
         };
         assert_eq!(paa_of_png(name, &png_bytes(&p)), want, "{name}");
     }
-    // 16-bit with gAMA, as in the #40 run.
+    // 16-bit with gAMA, as in the scan.
     let wide = variant(2, 16, false, false, false);
     let with = Png {
         pre: vec![gama(45_455)],
@@ -459,7 +455,7 @@ fn out_of_range_palette_index_does_not_panic() {
 }
 
 // F8: a PLTE chunk whose length is not a multiple of 3 panics inside the png crate (0.17.16,
-// transform/palette.rs) even when every index is 0. The fix (#046) rejects it in `load_png`.
+// transform/palette.rs) even when every index is 0. The fix rejects it in `load_png`.
 #[test]
 fn plte_length_not_a_multiple_of_3_is_a_png_error_not_a_panic() {
     let mut p = variant(3, 8, false, false, false);
@@ -523,7 +519,7 @@ fn encode_refuses_sides_below_4_and_non_square_odd_sizes_with_the_size_message()
     }
 }
 
-// The PNG header guard (#55): up to 16384 on a side and 8192x8192 pixels in all pass it; one more
+// The PNG header guard: up to 16384 on a side and 8192x8192 pixels in all pass it; one more
 // on a side or in pixel count does not. The text is what tells the refusals apart (a header-only
 // file fails later for another reason), so it is asserted.
 #[test]
@@ -569,7 +565,7 @@ fn png_header_size_guard_is_the_load_limit() {
     assert_eq!((got.w, got.h, got.rgba.len()), (16384, 4, 16384 * 4 * 4));
 }
 
-// #55: a PNG over 4096 is halved to 4096 (the oracle's cap, research/rust-deep/logs/over4096-055) with the
+// A PNG over 4096 is halved to 4096 (the oracle's cap) with the
 // rule's own filter, so the file equals encoding `limit_size(.., 4096)`; a max size below that still wins.
 #[test]
 fn encode_file_halves_an_over_4096_png_with_the_rules_filter() {
@@ -701,7 +697,7 @@ fn filter_probe(kind: usize) -> Image {
 #[test]
 fn limit_size_is_the_rules_mip_1() {
     // `_co` checker, `_nohq` alpha border, `_nsex` alpha border: ours was 13.7, 27.8 and 44.6 dB
-    // from the oracle's mip 1 (part C1, Q-img-1).
+    // from ImageToPAA's mip 1.
     for (suffix, kind) in [("co", 0), ("nohq", 1), ("nsex", 1)] {
         let r = rule(suffix);
         let want = crate::mipfilter::next_mip(&filter_probe(kind), r.mip_filter, r.linear_mips);
@@ -741,7 +737,7 @@ fn binary_alpha_ca_stays_binary_after_max_size() {
     assert!(encode::encode(got, r).is_ok());
 }
 
-// The #052 case, flipped by #031: a binary-alpha `_ca` whose hard edge is NOT on the 2x2 grid (a 1-px-wide
+// A binary-alpha `_ca` whose hard edge is NOT on the 2x2 grid (a 1-px-wide
 // hole at an odd column, so each quad straddling it averages to alpha 127) turns soft after the mip
 // filter. Soft alpha is encoded here now (the AVGC of soft alpha is reproduced), so this file converts in
 // Loki instead of being handed to ImageToPAA: FLAG 1 (soft alpha, DXT5), AVGC alpha below 255.
@@ -778,8 +774,8 @@ fn off_grid_binary_alpha_ca_converts_in_loki_after_max_size() {
 
 // The alpha-weighted mean of equal colours is that colour, whatever the weights. The chain used
 // floating point weights and floored R and G, so it was one level low on about 13 percent of
-// quads (part C1, Q-mipfilter-1). #053 replaced it with the rule fitted to ImageToPAA on flat and
-// non-flat data (research/rust-deep/logs/rounding-053): the exact weighted mean, half to even.
+// quads. It was replaced with the rule fitted to ImageToPAA on flat and
+// non-flat data: the exact weighted mean, half to even.
 #[test]
 fn alpha_weighted_chain_keeps_a_flat_colour_exactly() {
     use crate::rules::Filter;
@@ -804,7 +800,7 @@ fn alpha_weighted_chain_keeps_a_flat_colour_exactly() {
     );
 }
 
-// #053: ties of the weighted mean go to the even value (fitted: with constant alpha 128 the oracle
+// Ties of the weighted mean go to the even value (fitted: with constant alpha 128 the oracle
 // output matched half-to-even on every stored level of noise, where half-up and floor missed 2 to
 // 6 percent); a quad whose alphas are all 255 (or all 0) is the plain byte box (R, G truncate, B
 // rounds).
@@ -832,7 +828,7 @@ fn alpha_weighted_ties_go_to_even_and_opaque_quads_use_the_box() {
 
 // --- F16 (list item 18): helpers out of contract -----------------------------------------------------------
 
-// `Image::check` is the one buffer-length check (#50): exact length passes, short, long and a
+// `Image::check` is the one buffer-length check: exact length passes, short, long and a
 // w * h * 4 that overflows usize are `Error::Size`, and `encode` and `limit_size` both use it.
 #[test]
 fn image_check_accepts_only_an_exact_buffer() {
@@ -928,7 +924,7 @@ fn paa_write_refuses_shapes_the_reader_cannot_return() {
 // --- F7 (list item 22): hostile header sizes in the pixel-format decoder -------------------------------------
 
 // decode_mip reserves w * h * 2 bytes before reading any data: an 8-byte stream declaring
-// 32767x65535 asks for 4.29 GB (an abort under a small memory cap; part C2, D-C2-1). #047 caps the
+// 32767x65535 asks for 4.29 GB (an abort under a small memory cap). The decoder caps the
 // reservation by the data length, so this now runs quickly in a few bytes. A reservation of the
 // full size would abort or crawl here, which is how a regression shows.
 #[test]
@@ -1062,7 +1058,7 @@ fn decoder_places_every_block_where_the_encoder_put_it() {
 // --- LZSS (list item 20; mutants a_prewindow_err, a_zero_dist, a_match_bounds) -------------------------------------
 
 // A match that reaches before the start of the output reads the window's initial fill, spaces
-// (0x20). Real ImageToPAA files do this (2 of 810 mips, part C2 D-C2-2) and ImageToPAA's own reader
+// (0x20). Real ImageToPAA files do this (2 of 810 mips) and ImageToPAA's own reader
 // agrees on this stream, so the byte is part of the format and an "error on pre-window match" would
 // break real files. Stream: flags 0b10, a match of distance 1 length 3 (three 0x20), literal 0xAA, then the
 // checksum 0x20*3 + (0xAA as i8) = 10.
@@ -1133,7 +1129,7 @@ fn paa_mip_data_of_65536_bytes_or_more_round_trips() {
 
 // ImageToPAA writes a 1x1 or 2x2 image as a header with no mip entries and no end marker (a
 // 112 to 128 byte file). The reader needs the end marker and calls it truncated. Pinned as the
-// documented behaviour ("probably wontfix", REPORT F16): the dev CLI is the only reader.
+// documented behaviour (a known limit): the dev CLI is the only reader.
 #[test]
 fn a_header_with_no_mips_and_no_end_marker_is_rejected_as_truncated() {
     let full = paa::write(&Paa {
@@ -1215,7 +1211,7 @@ fn every_type_round_trips_to_the_quantised_pixels() {
 
 // The reader is fed every one-byte corruption of a header and every truncation of each seed file;
 // it may refuse but never panic or hang. Pixel decoding is attempted only on small mips so that a
-// corrupted size cannot ask for gigabytes (that hazard is the huge-declared-size test above, #047).
+// corrupted size cannot ask for gigabytes (that hazard is the huge-declared-size test above).
 #[test]
 fn header_corruption_and_truncation_never_panic() {
     for (suffix, _) in TYPES {
@@ -1307,7 +1303,7 @@ fn encoded_blocks_have_endpoints_ordered_for_their_mode() {
 
 // A DXT5 block whose c0 <= c1 is decoded with the 3-colour palette (midpoint at index 2, black at
 // index 3), the same as ImageToPAA's own reader does. The encoder never writes one (above). What a
-// real BC3 GPU does with it is unproven (REPORT F16), so this pins our decoder, not the hardware.
+// real BC3 GPU does with it is unproven, so this pins our decoder, not the hardware.
 #[test]
 fn dxt5_block_with_c0_below_c1_decodes_with_the_3_colour_palette() {
     let mut blk = vec![255u8, 255, 0, 0, 0, 0, 0, 0]; // alpha: a0 = a1 = 255, every index 0
@@ -1323,7 +1319,7 @@ fn dxt5_block_with_c0_below_c1_decodes_with_the_3_colour_palette() {
 
 // --- big flat image (list item 17) -----------------------------------------------------------------------------------
 
-// A flat black `_co` at the largest size: AVGC is 1,1,1 with alpha 255 (#31: ImageToPAA gives 1 for
+// A flat black `_co` at the largest size: AVGC is 1,1,1 with alpha 255 (ImageToPAA gives 1 for
 // opaque black in the linear classes, 0 in the data classes; seen on a 512x512 `_co` and on the
 // alpha sweep), every mip down to 4x4 is written, and the whole file is tiny (LZO packs a flat DXT1
 // mip to a few hundred bytes).

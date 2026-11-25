@@ -48,7 +48,7 @@ def make_png(path: Path, size: int = 64, alpha: bool = False) -> Path:
 
 
 def hostile_png(w: int, h: int) -> bytes:
-    """A 68-byte PNG that only declares w x h (the #020 case): header, junk IDAT, IEND."""
+    """A 68-byte PNG that only declares w x h (the case): header, junk IDAT, IEND."""
 
     def chunk(name: bytes, data: bytes) -> bytes:
         body = name + data
@@ -72,9 +72,9 @@ def hostile_png(w: int, h: int) -> bytes:
         ("rock_dt.png", True),
         ("rock_smdi.png", True),
         ("rock_as.png", True),
-        ("rock_sky.png", True),  # #31: verified under the relative checks of #49
+        ("rock_sky.png", True),  # verified under the relative checks
         ("rock_cat.png", False),
-        ("rock_foo.png", True),  # unknown suffix: the default rule, as ImageToPAA does (#054)
+        ("rock_foo.png", True),  # unknown suffix: the default rule, as ImageToPAA does
         ("rock_co2.png", True),
         ("rock_nohq2.png", True),
         ("rock_co.jpg", False),
@@ -84,7 +84,7 @@ def test_supported_every_suffix_kind(name, want):
     assert _paa.supported(name) is want
 
 
-# Every TexConvert suffix, with the type word ImageToPAA writes for an opaque image (#025).
+# Every TexConvert suffix, with the type word ImageToPAA writes for an opaque image.
 SUFFIX_TYPES = {
     "8888": 0x1555, "co": 0xFF01, "raw": 0x1555, "ca": 0xFF05, "sky": 0xFF05, "detail": 0xFF01,
     "cdt": 0xFF01, "lco": 0xFF01, "mco": 0xFF01, "draftlco": 0x1555, "lca": 0xFF05, "mask": 0xFF01,
@@ -102,7 +102,7 @@ def test_encode_every_suffix_writes_the_imagetopaa_type(tmp_path, suffix):
     png = make_png(tmp_path / f"t_{suffix}.png", 32)
     _paa.encode(str(png), str(tmp_path / "o.paa"), None)
     assert read_header(tmp_path / "o.paa")[0] == SUFFIX_TYPES[suffix]
-    # Routing: every suffix of the table is verified and claimed (`sky` joined in #31).
+    # Routing: every suffix of the table is verified and claimed (`sky` joined in).
     assert _paa.supported(f"t_{suffix}.png") is True
 
 
@@ -117,7 +117,7 @@ def test_noise_suffixes_are_refused_and_never_routed(tmp_path, suffix):
 
 def test_needs_imagetopaa_is_a_value_error_with_a_short_reason(tmp_path):
     assert issubclass(_paa.NeedsImageToPAA, ValueError)
-    png = make_png(tmp_path / "a_cat.png", 32, alpha=True)  # a noise mip filter: the one refusal left (#31)
+    png = make_png(tmp_path / "a_cat.png", 32, alpha=True)  # a noise mip filter: the one refusal left
     with pytest.raises(_paa.NeedsImageToPAA) as exc:
         _paa.encode(str(png), str(tmp_path / "o.paa"), None)
     assert str(exc.value) == "noise mip filter"
@@ -145,7 +145,7 @@ def test_encode_co_dxt1_and_ca_dxt5(tmp_path):
 
 
 def test_soft_alpha_and_one_bit_alpha_are_encoded_not_refused(tmp_path):
-    """#31 (decision 47): the AVGC of soft alpha is reproduced and the DXT1 1-bit mask is Loki's own cut-out, so no alpha
+    """The AVGC of soft alpha is reproduced and the DXT1 1-bit mask is Loki's own cut-out, so no alpha
     file is handed to ImageToPAA any more: a file, the type and FLAG ImageToPAA writes, and the AVGC alpha of the mean."""
     for name, ty, flag in (("a_co.png", 0xFF01, 2), ("a_ca.png", 0xFF05, 1), ("b_raw.png", 0x1555, 2)):
         png = make_png(tmp_path / name, 32, alpha=True)  # random alpha: soft

@@ -1,6 +1,6 @@
 [project]
 name = "loki"
-version = "0.3.1"
+version = "0.3.2"
 description = "Drop PNG textures in and get Arma 3 PAA files, rebuilt on every save."
 license = "LicenseRef-MIT-Commons-Clause"
 license-files = ["LICENSE", "THIRD_PARTY_NOTICES"]

@@ -1,4 +1,4 @@
-"""Loki's record of the output settings it used (outputs.json, #60 decision 55): up-to-date through the CLI,
+"""Loki's record of the output settings it used (outputs.json): up-to-date through the CLI,
 mtime/size staleness, pruning, a corrupt file, parallel writers. The store is a temp file (conftest, LOKI_OUTPUTS)."""
 
 import json

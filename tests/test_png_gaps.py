@@ -1,12 +1,9 @@
-"""Python side of the #44 test-gap bundle (the #40 deep-scan report, "Merged test-gap list", items 3 to 6).
+"""Python side of the encoder test-gap bundle.
 
 What is here and why:
-* tRNS colour keys end to end (item 3) and the 16-bit key scaling in core._to_8bit_rgb (#43 review).
-* Behaviour a later 0.3.1 task delivers, as strict xfails: when that task lands the test XPASSes, strict
-  mode fails the run, and the task removes the marker. Both have landed, so no marker is left here:
-  sides below 4 (#045) and error detail at the Python boundary (lock, missing file, panic text,
-  bad PLTE; #046).
-* The non-power-of-two refusal text (item 5; the 8192 hand-over is test_loki_converter.test_route).
+* tRNS colour keys end to end (item 3) and the 16-bit key scaling in core._to_8bit_rgb (review).
+* Sides below 4 and error detail at the Python boundary (lock, missing file, panic text, bad PLTE).
+* The non-power-of-two refusal text (the 8192 hand-over is test_loki_converter.test_route).
 
 Inputs are generated here. ImageToPAA-backed tests skip without Arma 3 Tools."""
 
@@ -53,7 +50,7 @@ def _alpha_error(got, alpha) -> tuple[float, int]:
 
 
 def test_colour_key_rgb_as_ca_keeps_the_cut_out_in_the_loki_encoder(tmp_path, paa_proto):  # noqa: F811
-    """Loki's own `_ca` route turns the key into alpha 0: alpha mean within 1 level of the ideal (#40 F3)."""
+    """Loki's own `_ca` route turns the key into alpha 0: alpha mean within 1 level of the ideal (F3)."""
     png = tmp_path / "key_ca.png"
     alpha = _rgb8key(png)
     res = core.convert(png, None, None, core.LOKI)
@@ -63,7 +60,7 @@ def test_colour_key_rgb_as_ca_keeps_the_cut_out_in_the_loki_encoder(tmp_path, pa
 
 
 def test_colour_key_rgb_as_co_keeps_the_cut_out_in_the_loki_encoder(tmp_path, paa_proto):  # noqa: F811
-    """`_co` has 1-bit alpha: Loki cuts its own mask since #31 (decision 47), so it converts without the tool and the
+    """`_co` has 1-bit alpha: Loki cuts its own mask, so it converts without the tool and the
     16x16 hole of the key is clear (it lies on block edges, so the mask is exact)."""
     png = tmp_path / "key_co.png"
     alpha = _rgb8key(png)
@@ -76,7 +73,7 @@ def test_colour_key_rgb_as_co_keeps_the_cut_out_in_the_loki_encoder(tmp_path, pa
 @needs_tool
 def test_colour_key_rgb_as_co_through_imagetopaa_keeps_the_cut_out(tmp_path, paa_proto):  # noqa: F811
     """The hand-over copy turns the key into real alpha, which ImageToPAA ignores as a key: the DXT1 mask
-    has the 16x16 hole (#40 D-G-3 was alpha +15.9 on the whole image)."""
+    has the 16x16 hole (D-G-3 was alpha +15.9 on the whole image)."""
     png = tmp_path / "key_co.png"
     alpha = _rgb8key(png)
     res = core.convert(png, TOOL, None, core.BOHEMIA)  # the Bohemia converter is chosen: the hand-over copy path
@@ -85,7 +82,7 @@ def test_colour_key_rgb_as_co_through_imagetopaa_keeps_the_cut_out(tmp_path, paa
     assert abs(shift) <= 1 and wrong == 0, (shift, wrong)
 
 
-# --- #43 review: the 16-bit colour key in core._to_8bit_rgb ---------------------------------------------------
+# --- the 16-bit colour key in core._to_8bit_rgb ---------------------------------------------------
 
 
 def test_16bit_rgb_colour_key_is_scaled_to_8_bit_and_the_keyed_texels_are_transparent(tmp_path):
@@ -123,7 +120,7 @@ def test_16bit_grey_colour_key_is_scaled_to_8_bit_and_the_keyed_texels_are_trans
 
 
 def test_non_power_of_two_png_is_refused_with_a_clear_text_and_not_handed_over(tmp_path, monkeypatch):
-    """Both converters refuse a 100x100 texture (#40 D-B-3); route() still picks Loki (it never looks at the
+    """Both converters refuse a 100x100 texture (D-B-3); route() still picks Loki (it never looks at the
     size), and Loki's message names the rule."""
     called = []
     monkeypatch.setattr(core, "_run_tool", lambda *a: called.append(a))

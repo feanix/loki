@@ -204,3 +204,59 @@ fn dxt1_cutout_keeps_its_coverage_down_the_chain() {
         "the 4x4 mip kept {opaque} of 16 texels (a third of the art is opaque)"
     );
 }
+
+// A DXT5 alpha block is never worse than the plain fit between its extremes (8 levels from the
+// block's maximum down to its minimum), and over a soft-alpha image it is clearly better.
+#[test]
+fn dxt5_alpha_block_fit_beats_the_extremes_pair() {
+    use crate::dxt::{decode_image, encode_image, Format};
+    let (w, h) = (64usize, 64usize);
+    let mut s = 0x5eed_1234u32;
+    let mut rgba = Vec::with_capacity(w * h * 4);
+    for _ in 0..w * h {
+        s = s.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        rgba.extend_from_slice(&[90, 120, 150, (s >> 24) as u8]);
+    }
+    let dec = decode_image(&encode_image(&rgba, w, h, Format::Dxt5), w, h, true).unwrap();
+    let (mut ours, mut extremes) = (0i64, 0i64);
+    for by in 0..h / 4 {
+        for bx in 0..w / 4 {
+            let texels: Vec<(i32, i32)> = (0..16)
+                .map(|i| {
+                    let o = ((by * 4 + i / 4) * w + bx * 4 + i % 4) * 4 + 3;
+                    (rgba[o] as i32, dec[o] as i32)
+                })
+                .collect();
+            let hi = texels.iter().map(|t| t.0).max().unwrap();
+            let lo = texels.iter().map(|t| t.0).min().unwrap();
+            let levels: Vec<i32> = std::iter::once(hi)
+                .chain(std::iter::once(lo))
+                .chain((1..7).map(|k| ((7 - k) * hi + k * lo + 3) / 7))
+                .collect();
+            let plain: i64 = texels
+                .iter()
+                .map(|t| {
+                    levels
+                        .iter()
+                        .map(|l| ((t.0 - l) * (t.0 - l)) as i64)
+                        .min()
+                        .unwrap()
+                })
+                .sum();
+            let fit: i64 = texels
+                .iter()
+                .map(|t| ((t.0 - t.1) * (t.0 - t.1)) as i64)
+                .sum();
+            assert!(
+                fit <= plain,
+                "block {bx},{by}: fit {fit} against extremes {plain}"
+            );
+            ours += fit;
+            extremes += plain;
+        }
+    }
+    assert!(
+        ours * 10 < extremes * 9,
+        "total error {ours} against extremes {extremes}"
+    );
+}

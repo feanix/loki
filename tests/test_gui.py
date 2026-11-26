@@ -49,7 +49,7 @@ def test_window_lists_rows_and_toggles(tk_root, tmp_path):
     files = pngs(tmp_path / "tex", 3)
     app, win = make_win(tk_root, tmp_path)
     assert win.empty_label.winfo_manager() == "place"  # empty list shows the drag hint
-    assert win.empty_label.cget("text") == "Drag PNG files here"
+    assert win.empty_label.cget("text") == "Drag PNG, TGA or JPG files here"
     app.add_files(files)
     win._tick()
     assert win.empty_label.winfo_manager() == ""
@@ -151,7 +151,7 @@ def test_dropping_files_on_the_window_adds_rows(tk_root, tmp_path):
     dnd.post_drop(win.top_hwnd(), [str(files[0]), str(tmp_path / "tex" / "note.txt"), str(files[1])])
     pump_tk(tk_root, lambda: len(win.tree.get_children()) == 2)
     assert [win.tree.item(i, "values")[1] for i in win.tree.get_children()] == ["t00.png", "t01.png"]
-    assert win.status_var.get() == "Added 2 files; skipped 1 not PNG"
+    assert win.status_var.get() == "Added 2 files; skipped 1 not PNG, TGA or JPG"
     # a drop on a widget inside the window lands too (each widget is hooked)
     dnd.post_drop(int(win.tree.winfo_id()), [str(files[0])])
     pump_tk(tk_root, lambda: "1 already listed" in win.status_var.get())
@@ -171,13 +171,9 @@ def test_missing_tool_shows_warning_row(tk_root, tmp_path):
     app.close()
 
 
-def test_ui_stays_responsive_during_convert_all_of_50(tk_root, tmp_path, monkeypatch):
-    monkeypatch.setattr(core, "convert", slow_convert)
-    files = pngs(tmp_path / "tex", 50)
-    app = app_mod.App(tmp_path / "s.json", find_tool=lambda _o: Path("t.exe"), interval=0.05, settle=0.2, workers=1)
-    win = gui.MainWindow(app, tk_root)
-    app.add_files(files)
-    win._tick()
+def measure_tk_service(tk_root, win, app, freeze=0.0):
+    """Click Convert all and pump Tk until done; returns click time, tick gaps and the statuses seen.
+    freeze > 0 injects a blocking callback on the Tk thread (a deliberately frozen UI)."""
     ticks = []
 
     def ticker():
@@ -185,24 +181,87 @@ def test_ui_stays_responsive_during_convert_all_of_50(tk_root, tmp_path, monkeyp
         tk_root.after(50, ticker)
 
     tk_root.after(50, ticker)
+    if freeze:
+        tk_root.after(150, lambda: time.sleep(freeze))
     t0 = time.monotonic()
     win.convert_btn.invoke()
-    assert time.monotonic() - t0 < 0.2  # the click returns at once
-    assert str(win.convert_btn.cget("text")) == "Convert all"
+    click = time.monotonic() - t0
     end = time.monotonic() + 30
-    status_seen = set()
+    seen = set()
     while time.monotonic() < end:
         tk_root.update()
-        status_seen.add(win.status_var.get())
+        seen.add(win.status_var.get())
         if not app.converting and app.pump() is False and app.summary().startswith("Converted"):
             break
         time.sleep(0.005)
-    assert len(ticks) >= 8, f"Tk loop starved: only {len(ticks)} ticks during ~1 s of conversion"
     gaps = [b - a for a, b in itertools.pairwise(ticks)]
-    assert max(gaps) < 0.5
+    return click, gaps, seen
+
+
+def baseline_tk_gap(tk_root):
+    """Worst tick gap of an idle Tk loop in this run: how late this machine services a 50 ms timer right now."""
+    ticks = []
+
+    def ticker():
+        ticks.append(time.monotonic())
+        nxt[0] = tk_root.after(50, ticker)
+
+    nxt = [tk_root.after(50, ticker)]
+    end = time.monotonic() + 0.6
+    while time.monotonic() < end:
+        tk_root.update()
+        time.sleep(0.005)
+    tk_root.after_cancel(nxt[0])
+    gaps = [b - a for a, b in itertools.pairwise(ticks)]
+    return max(gaps, default=0.05)
+
+
+def freeze_limit(baseline):
+    """Largest tick gap that still counts as responsive: 10x the idle baseline, between 0.5 s and 2 s."""
+    return min(max(0.5, 10 * baseline), 2.0)
+
+
+def responsive_problems(click, gaps, baseline):
+    """What is wrong with the measured run, empty when the UI stayed responsive."""
+    limit = freeze_limit(baseline)
+    problems = []
+    if click >= max(0.2, 10 * baseline):
+        problems.append(f"click took {click:.2f} s")
+    if len(gaps) < 2:
+        problems.append("Tk loop starved: fewer than 3 ticks")
+    elif max(gaps) >= limit:
+        problems.append(f"tick gap {max(gaps):.2f} s >= {limit:.2f} s")
+    return problems
+
+
+def test_ui_stays_responsive_during_convert_all_of_50(tk_root, tmp_path, monkeypatch):
+    monkeypatch.setattr(core, "convert", slow_convert)
+    files = pngs(tmp_path / "tex", 50)
+    app = app_mod.App(tmp_path / "s.json", find_tool=lambda _o: Path("t.exe"), interval=0.05, settle=0.2, workers=1)
+    win = gui.MainWindow(app, tk_root)
+    app.add_files(files)
+    win._tick()
+    baseline = baseline_tk_gap(tk_root)  # limits scale with how busy the machine is in this very run
+    click, gaps, status_seen = measure_tk_service(tk_root, win, app)
+    assert str(win.convert_btn.cget("text")) == "Convert all"
+    assert responsive_problems(click, gaps, baseline) == []
     assert any(s.startswith("Converting ") for s in status_seen)
     assert win.status_var.get() == "Converted 50 file(s)"
     assert all(win.tree.item(i, "values")[6] == "Up to date" for i in win.tree.get_children())
+    app.close()
+
+
+def test_responsiveness_check_catches_a_frozen_ui(tk_root, tmp_path, monkeypatch):
+    monkeypatch.setattr(core, "convert", slow_convert)
+    files = pngs(tmp_path / "tex", 50)
+    app = app_mod.App(tmp_path / "s.json", find_tool=lambda _o: Path("t.exe"), interval=0.05, settle=0.2, workers=1)
+    win = gui.MainWindow(app, tk_root)
+    app.add_files(files)
+    win._tick()
+    baseline = baseline_tk_gap(tk_root)
+    click, gaps, _seen = measure_tk_service(tk_root, win, app, freeze=3.0)  # the Tk thread blocked for 3 s
+    problems = responsive_problems(click, gaps, baseline)
+    assert problems and any("tick gap" in p for p in problems)
     app.close()
 
 

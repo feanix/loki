@@ -56,7 +56,7 @@ def test_icon_present():
 
 
 def test_version_is_one_value_everywhere():
-    assert loki.__version__ == "0.3.2"
+    assert loki.__version__ == "0.3.3"
     assert f'version = "{loki.__version__}"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
 
 

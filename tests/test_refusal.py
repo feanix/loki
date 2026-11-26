@@ -1,4 +1,4 @@
-"""Per-file encoder refusal and routing per suffix (criterion 5, alpha refusals gone in).
+"""Per-file encoder refusal and routing per suffix (alpha refusals gone in).
 
 The encoder alone decides what it refuses (`_paa.NeedsImageToPAA`); Python never predicts it. So the
 expectations below come from `_paa.supported` and from asking `_paa.encode` itself, never from a suffix
@@ -167,7 +167,7 @@ def test_cli_prints_a_refusal_as_needs_tool_and_counts_it(tmp_path, monkeypatch,
     assert not png.with_suffix(".paa").exists() and ok.with_suffix(".paa").exists()
 
 
-# --- criterion 5: one generated PNG per suffix the cfg knows, tool present and absent ----------------------
+# --- one generated PNG per suffix the cfg knows, tool present and absent ----------------------
 
 
 def cfg_suffixes() -> list[str]:

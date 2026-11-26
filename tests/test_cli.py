@@ -4,6 +4,7 @@ Runs loki.cli.main in-process with the real Loki encoder; ImageToPAA is never ne
 patched to "absent"), and a real CreateFileW hold stands in for TexView or an exporter.
 """
 
+import os
 import re
 import threading
 import time
@@ -200,10 +201,32 @@ def test_windowed_exe_convert_prints_pointer_and_exits_2(capsys):
     assert "Loki-cli.exe <inputs...>" in err
 
 
-@pytest.mark.parametrize("argv", [["x.png"], ["textures"], ["*.png", "--quiet"], ["convert"]])
-def test_windowed_exe_rejects_a_bare_input_with_the_pointer(argv, capsys):
+@pytest.mark.parametrize("argv", [["convert"], ["Convert", "x.png"], ["convert", "--quiet"]])
+def test_windowed_exe_convert_form_keeps_the_pointer(argv, capsys):
     assert loki_main.main(argv) == 2
     assert "Loki-cli.exe <inputs...>" in capsys.readouterr().err
+
+
+def test_windowed_exe_unknown_option_is_an_argparse_error_not_a_window(monkeypatch, capsys):
+    from loki import gui
+
+    monkeypatch.setattr(gui, "run_window", lambda *a, **k: pytest.fail("window opened"))
+    with pytest.raises(SystemExit) as exc:
+        loki_main.main(["--quiet", "x.png"])
+    assert exc.value.code == 2
+
+
+def test_windowed_exe_bare_inputs_open_the_window_with_them(monkeypatch, tmp_path):
+    from loki import gui
+
+    seen = []
+    monkeypatch.setattr(gui, "run_window", lambda settings, paths=None: seen.append((settings, paths)))
+    assert loki_main.main(["--settings", "s.json", "a.png", str(tmp_path)]) == 0
+    assert seen == [("s.json", [os.path.abspath("a.png"), str(tmp_path)])]
+    seen.clear()
+    assert loki_main.main(["x.png"]) == 0 and seen[0][1] == [os.path.abspath("x.png")]
+    seen.clear()
+    assert loki_main.main([]) == 0 and seen == [(None, None)]
 
 
 def test_windowed_exe_dev_options_are_not_routed_to_the_pointer(capsys):

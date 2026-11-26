@@ -419,8 +419,12 @@ class MainWindow:
         self.root.mainloop()
 
 
-def run_window(settings_path: str | None) -> None:
-    MainWindow(App(settings_path)).run()
+def run_window(settings_path: str | None, paths: list[str] | None = None) -> None:
+    """Open the window; `paths` (files dropped on the exe icon) go through the same handler as a window drop."""
+    app = App(settings_path)
+    if paths:
+        app.add_files(paths)
+    MainWindow(app).run()
 
 
 def top_hwnd(root: tk.Tk) -> int:
@@ -514,7 +518,7 @@ def screenshot(
     if drop:
         # Same window procedure an Explorer drop goes through (self-test of the packaged exe).
         dnd.post_drop(win.top_hwnd(), [str(Path(p).absolute()) for p in drop])
-        want = len(app.rows) + len({core.file_key(p) for p in drop if str(p).lower().endswith(".png")})
+        want = len(app.rows) + len({core.file_key(p) for p in drop if core.is_source(p)})
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline and len(app.rows) < want:
             win.root.update()

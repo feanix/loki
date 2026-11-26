@@ -88,7 +88,7 @@ def listing(root):
 
 def test_defaults_have_no_folder_anywhere(tmp_path):
     app = make_app(tmp_path)
-    assert app.rows == [] and app.summary() == "Drag PNG files onto the window to begin."
+    assert app.rows == [] and app.summary() == "Drag PNG, TGA or JPG files onto the window to begin."
     assert app_mod.MAX_CHOICES == (None, 2048, 1024, 512, 256)
     assert app.settings.files() == []
     assert not hasattr(app, "folder") and not hasattr(app.settings, "folder")
@@ -125,7 +125,7 @@ def test_drop_ignores_non_png_folders_missing_and_duplicates_and_counts_them(tmp
     )
     assert [r.name for r in app.rows] == ["a.png", "b.png"] + ([] if os.name == "nt" else ["B.PNG"])
     dupes = 2 if os.name == "nt" else 1
-    assert app.message == f"Added 1 file; skipped 3 not PNG, 1 not found, {dupes} already listed"
+    assert app.message == f"Added 1 file; skipped 3 not PNG, TGA or JPG, 1 not found, {dupes} already listed"
     app.add_files([tree / "a.png"])
     assert app.message == "Added 0 files; skipped 1 already listed"
     assert len(app.settings.files()) == len(app.rows)

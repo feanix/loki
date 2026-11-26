@@ -31,7 +31,7 @@ BAKE_HINT = "Auto watch converts on the next save. Use Convert all for files alr
 TOOL_MISSING_HINT = "ImageToPAA.exe not found. Install Arma 3 Tools from Steam, or browse to it."
 CONVERTER_LABELS = {core.LOKI: "Loki converter", core.BOHEMIA: "Bohemia ImageToPAA"}  # dropdown text
 MADE_BY_LABELS = {core.LOKI: "Loki", core.BOHEMIA: "Bohemia"}  # row status suffix
-EMPTY_HINT = "Drag PNG files here"
+EMPTY_HINT = "Drag PNG, TGA or JPG files here"
 # The window's controls and columns, named once so the view and the digest cannot drift apart.
 CONTROLS = ("Converter", "Convert all", "All on", "All off", "Remove", "About")
 DROPDOWN_ARROW = "▾"  # small down triangle
@@ -264,7 +264,7 @@ class App:
         if self.hint:
             return self.hint
         if not self.rows:
-            return "Drag PNG files onto the window to begin."
+            return "Drag PNG, TGA or JPG files onto the window to begin."
         n = len(self.rows)
         need = sum(r.status == core.NEEDS_CONVERTING for r in self.rows)
         flagged = sum(r.status == core.FLAGGED for r in self.rows)
@@ -274,14 +274,14 @@ class App:
         on = sum(r.bake for r in self.rows)
         gone = f", {missing} missing" if missing else ""
         tool = f", {blocked} need Arma 3 Tools" if blocked else ""
-        return f"{n} png: {need} need converting, {flagged} flagged{gone}, {bad} errors{tool}; auto watch on for {on}"
+        return f"{n} files: {need} need converting, {flagged} flagged{gone}, {bad} errors{tool}; auto watch on for {on}"
 
     # --- actions (all catch their own exceptions) ----------------------------------------------
 
     def add_files(self, paths: Iterable[str | Path]) -> list[str]:
         """The one handler for a drop (the OS drop and the scenario `drop` command both call it).
 
-        Keeps existing files with a .png suffix; skips folders, other files, paths that do not exist
+        Keeps existing files of a source type (core.SOURCE_EXTS); skips folders, other files, paths that do not exist
         and files already listed. Adds rows with their status at once; writes nothing but settings.
         Returns the keys added."""
         try:
@@ -290,7 +290,7 @@ class App:
             not_png = not_found = dupes = 0
             for raw in paths:
                 p = Path(raw)
-                if p.is_dir() or p.suffix.lower() != ".png":
+                if p.is_dir() or not core.is_source(p):
                     not_png += 1
                 elif not p.is_file():
                     not_found += 1
@@ -301,7 +301,7 @@ class App:
                     take.append(str(p))
             added = self.settings.add_files(take)
             skipped = [
-                f"{n} {why}" for n, why in ((not_png, "not PNG"), (not_found, "not found"), (dupes, "already listed")) if n
+                f"{n} {why}" for n, why in ((not_png, "not PNG, TGA or JPG"), (not_found, "not found"), (dupes, "already listed")) if n
             ]
             self.message = f"Added {len(added)} file{'' if len(added) == 1 else 's'}" + (
                 f"; skipped {', '.join(skipped)}" if skipped else ""

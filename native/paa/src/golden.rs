@@ -89,7 +89,11 @@ fn golden_hashes() {
     // `plain_soft` equals `ca_soft`, because the unsuffixed rule and `_co`/`_ca` store the same bytes
     // for those inputs (same format, FLAG and mip filter). The pairs are asserted after the loop
     // below, so a change that makes one class drift from the other fails by name.
-    // co_soft, ca_soft, plain_soft, ca_near_opaque and ca_lzo were re-recorded for the AVGC tag
+    // ca_soft, plain_soft, ca_lzo, nohq_opaque, nohq_256_soft and nohq_512 (DXT5 cases whose alpha blocks
+    // changed; ca_near_opaque and nohq_soft came out the same) were re-recorded for the DXT5 alpha block fit (all endpoint pairs among the block's own values, a local
+    // search and least squares, run only on blocks with a poor first fit and few distinct values: lower alpha error,
+    // so different alpha blocks); the DXT1 cases are unchanged.
+    // co_soft, ca_soft, plain_soft, ca_near_opaque and ca_lzo were earlier re-recorded for the AVGC tag
     // only (the per-texel colour table of `avgc.rs`). Checked once against the build before the AVGC change on a
     // near-opaque image: the files differ only in the three AVGC colour bytes. co_soft and plain_binary
     // were re-recorded again for the DXT1 1-bit alpha masks (`cutout.rs`: the masks of mips 1 down follow the
@@ -99,21 +103,21 @@ fn golden_hashes() {
         ("co_binary", "co", 64, 32, 1, 0x2e73a7bb25eebd2e),
         ("co_soft", "co", 32, 64, 2, 0x89acd0b9dfc92589),
         ("ca_opaque", "ca", 64, 64, 0, 0xef33eb4cb092cf12),
-        ("ca_soft", "ca", 64, 64, 2, 0xe8c95e84e6142dac),
+        ("ca_soft", "ca", 64, 64, 2, 0x3c1be8123b4afcc5),
         ("ca_near_opaque", "ca", 64, 64, 3, 0x9577ae99139ff92e),
         ("plain_opaque", "", 64, 64, 0, 0x88202944b1d9b0f5),
         ("plain_binary", "", 64, 64, 1, 0x504b5377a78f266f),
-        ("plain_soft", "", 64, 64, 2, 0xe8c95e84e6142dac),
+        ("plain_soft", "", 64, 64, 2, 0x3c1be8123b4afcc5),
         // nohq: the normal-map alpha chain runs first, every level (including level 0) is
         // renormalised, the swizzle comes after the chain, and the FLAG tag is set from alpha.
         // R and G are truncated in the box chain. nohq_soft changed with the fitted rounding: the alpha-weighted mean
         // is now rounded half to even (was float weights with a floor), so every partly transparent quad can differ.
-        ("nohq_opaque", "nohq", 64, 64, 0, 0xb47c7caeeb59fcb1),
+        ("nohq_opaque", "nohq", 64, 64, 0, 0x886240f565f82891),
         ("nohq_soft", "nohq", 64, 32, 2, 0x66a114d0bb9e7e89),
         // 256 wide: wide enough for the LZO layer to apply to the top mips (see `LZO_MIN_WIDTH`
         // in encode.rs).
         ("co_lzo", "co", 256, 128, 0, 0x25f199e715a2a93f),
-        ("ca_lzo", "ca", 256, 256, 2, 0x153c930529cd7416),
+        ("ca_lzo", "ca", 256, 256, 2, 0x5d0860f418fcf5b7),
     ];
     let mut bad = Vec::new();
     for &(name, suffix, w, h, alpha, want) in cases {
@@ -140,8 +144,8 @@ fn golden_hashes_detail_and_normal_maps() {
     let cases: &[(&str, &str, usize, usize, u8, u64)] = &[
         ("dt_256", "dt", 256, 256, 0, 0x5df3eca774d41b71),
         ("dt_512_binary", "dt", 512, 512, 1, 0x068052eed038606a),
-        ("nohq_256_soft", "nohq", 256, 256, 2, 0xe2cc648f0f56ccd1),
-        ("nohq_512", "nohq", 512, 512, 0, 0x4f93d8c4b4d18843),
+        ("nohq_256_soft", "nohq", 256, 256, 2, 0x5cf7cac8e2c069d9),
+        ("nohq_512", "nohq", 512, 512, 0, 0xe8622be13aff1b54),
     ];
     let mut bad = Vec::new();
     for &(name, suffix, w, h, alpha, want) in cases {

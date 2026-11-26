@@ -1,8 +1,7 @@
-//! Test-gap bundle from a deep scan of the encoder. Tests only: nothing here changes behaviour.
+//! Extra encoder tests. Tests only: nothing here changes behaviour.
 //!
 //! Two kinds of test live here:
-//! * Tests that close gaps a mutation run found: a mutant of the code under test survived the
-//!   older suite, and each of these kills it.
+//! * Tests that close gaps the older suite left: each fails if the code under test is broken in the way it names.
 //! * The PNG-variant equivalence table. It writes each PNG variant byte by byte (bit depth,
 //!   colour type, tRNS, interlace and colour chunks exact, which the `png` crate's own encoder
 //!   cannot do) and proves the encoder treats it as the plain 8-bit RGBA of the same pixels.
@@ -435,10 +434,10 @@ fn colour_space_chunks_do_not_change_the_pixels() {
     );
 }
 
-// --- test-gap list item 9 (F8): palette hazards -------------------------------------------------------
+// --- palette hazards -------------------------------------------------------
 
 // A palette index past the end of the palette is not an error for the loader (Loki converts it,
-// ImageToPAA rejects it: part F, D-F-2). Pinned so a change is noticed; it must not panic.
+// ImageToPAA rejects it). Pinned so a change is noticed; it must not panic.
 #[test]
 fn out_of_range_palette_index_does_not_panic() {
     let mut p = variant(3, 4, false, false, false);
@@ -454,7 +453,7 @@ fn out_of_range_palette_index_does_not_panic() {
     );
 }
 
-// F8: a PLTE chunk whose length is not a multiple of 3 panics inside the png crate (0.17.16,
+// A PLTE chunk whose length is not a multiple of 3 panics inside the png crate (0.17.16,
 // transform/palette.rs) even when every index is 0. The fix rejects it in `load_png`.
 #[test]
 fn plte_length_not_a_multiple_of_3_is_a_png_error_not_a_panic() {
@@ -472,7 +471,7 @@ fn plte_length_not_a_multiple_of_3_is_a_png_error_not_a_panic() {
     );
 }
 
-// --- test-gap list item 16 (F12): size guards ---------------------------------------------------------
+// --- size guards ---------------------------------------------------------
 
 #[test]
 fn encode_accepts_the_largest_side_and_refuses_one_octave_more_with_a_clear_message() {
@@ -649,7 +648,7 @@ fn load_png_msg(bytes: &[u8]) -> String {
     }
 }
 
-// --- F4 (list item 6): sides below 4 -----------------------------------------------------------------
+// --- sides below 4 -----------------------------------------------------------------
 
 // ImageToPAA converts these for the non-DXT classes; Loki used to refuse with a ValueError and no hand-over,
 // and the text blamed a power of two for a 256x1 strip. fixed in 0.3.1: non-DXT classes are encoded (tests_small.rs).
@@ -665,7 +664,7 @@ fn tiny_sides_are_handed_over_or_encoded_never_a_size_error() {
     }
 }
 
-// --- F6 (list item 8): the max-size downscale is the rule's mip filter -----------------------------------
+// --- the max-size downscale is the rule's mip filter -----------------------------------
 
 /// 128x128 images where the byte box and the oracle's chain filter disagree: a checker of
 /// black and white, and an opaque image with a transparent border row.
@@ -770,7 +769,7 @@ fn off_grid_binary_alpha_ca_converts_in_loki_after_max_size() {
     assert!(p.tags[0].data[3] < 255, "the AVGC alpha counts the hole");
 }
 
-// --- F11 (list item 12): the alpha-weighted chain of a flat colour ---------------------------------------
+// --- the alpha-weighted chain of a flat colour ---------------------------------------
 
 // The alpha-weighted mean of equal colours is that colour, whatever the weights. The chain used
 // floating point weights and floored R and G, so it was one level low on about 13 percent of
@@ -826,7 +825,7 @@ fn alpha_weighted_ties_go_to_even_and_opaque_quads_use_the_box() {
     assert_eq!(m.rgba[0], 10);
 }
 
-// --- F16 (list item 18): helpers out of contract -----------------------------------------------------------
+// --- helpers out of contract -----------------------------------------------------------
 
 // `Image::check` is the one buffer-length check: exact length passes, short, long and a
 // w * h * 4 that overflows usize are `Error::Size`, and `encode` and `limit_size` both use it.
@@ -888,7 +887,7 @@ fn helpers_on_bad_input_return_an_error_instead_of_panicking() {
     assert!(m.w >= 1 && m.h >= 1, "next_mip of 1x1 is {}x{}", m.w, m.h);
 }
 
-// --- F16 (list item 25): paa::write validation -------------------------------------------------------------
+// --- paa::write validation -------------------------------------------------------------
 
 #[test]
 fn paa_write_refuses_shapes_the_reader_cannot_return() {
@@ -921,7 +920,7 @@ fn paa_write_refuses_shapes_the_reader_cannot_return() {
     );
 }
 
-// --- F7 (list item 22): hostile header sizes in the pixel-format decoder -------------------------------------
+// --- hostile header sizes in the pixel-format decoder -------------------------------------
 
 // decode_mip reserves w * h * 2 bytes before reading any data: an 8-byte stream declaring
 // 32767x65535 asks for 4.29 GB (an abort under a small memory cap). The decoder caps the
@@ -935,7 +934,7 @@ fn pixel_decode_of_a_huge_declared_size_fails_fast_without_a_huge_reservation() 
     }
 }
 
-// The LZO bomb (F7): a stream that expands far past a 4x4 DXT1 header's 8 bytes must be refused
+// The LZO bomb: a stream that expands far past a 4x4 DXT1 header's 8 bytes must be refused
 // at the declared size, not built in full. 16 MB of zeros packs to about 100 KB.
 #[test]
 fn lzo_bomb_is_refused_at_the_declared_size() {
@@ -951,7 +950,7 @@ fn lzo_bomb_is_refused_at_the_declared_size() {
     assert!(e.to_string().contains("lzo decode 4x4"), "{e}");
 }
 
-// Small LZO mips (F13): DXT stores whole blocks, so 2x2 and 1x1 are one block (8 bytes DXT1, 16
+// Small LZO mips: DXT stores whole blocks, so 2x2 and 1x1 are one block (8 bytes DXT1, 16
 // DXT5), and a 8x2 mip is two blocks. The old w*h/2 formula said 2, 0 and 4.
 #[test]
 fn small_lzo_mips_decode_with_the_block_based_size() {
@@ -1011,7 +1010,7 @@ fn lzss_output_larger_than_the_reservation_cap_still_decodes() {
     assert_eq!(crate::argb::lzss_unpack(&packed, raw.len()).unwrap(), raw);
 }
 
-// --- decoder block order (list item 19; mutant t3_block_stride_dec) ---------------------------------------
+// --- decoder block order ---------------------------------------
 
 /// Image of flat 4x4 blocks, every block its own colour.
 fn block_image(w: usize, h: usize) -> (Vec<u8>, impl Fn(usize, usize) -> [u8; 3]) {
@@ -1055,7 +1054,7 @@ fn decoder_places_every_block_where_the_encoder_put_it() {
     }
 }
 
-// --- LZSS (list item 20; mutants a_prewindow_err, a_zero_dist, a_match_bounds) -------------------------------------
+// --- LZSS -------------------------------------
 
 // A match that reaches before the start of the output reads the window's initial fill, spaces
 // (0x20). Real ImageToPAA files do this (2 of 810 mips) and ImageToPAA's own reader
@@ -1085,7 +1084,7 @@ fn lzss_match_cannot_read_its_second_byte_from_the_checksum() {
     assert!(e.to_string().contains("truncated match"), "{e}");
 }
 
-// --- PAA length field (list item 21; mutant p_len_hi_byte) -------------------------------------------------------
+// --- PAA length field -------------------------------------------------------
 
 #[test]
 fn paa_mip_data_of_65536_bytes_or_more_round_trips() {
@@ -1125,7 +1124,7 @@ fn paa_mip_data_of_65536_bytes_or_more_round_trips() {
     }
 }
 
-// --- reader on files with no mips (list item 23, D-E-3) ---------------------------------------------------------------
+// --- reader on files with no mips ---------------------------------------------------------------
 
 // ImageToPAA writes a 1x1 or 2x2 image as a header with no mip entries and no end marker (a
 // 112 to 128 byte file). The reader needs the end marker and calls it truncated. Pinned as the
@@ -1149,7 +1148,7 @@ fn a_header_with_no_mips_and_no_end_marker_is_rejected_as_truncated() {
     assert!(e.to_string().contains("truncated"), "{e}");
 }
 
-// --- every type: round trip and header mutation (list item 24) -----------------------------------------------------------
+// --- every type: round trip and header mutation -----------------------------------------------------------
 
 /// (rule suffix, expected PAA type word) for the five types the crate writes.
 const TYPES: [(&str, u16); 5] = [
@@ -1240,7 +1239,7 @@ fn header_corruption_and_truncation_never_panic() {
     }
 }
 
-// --- DXT block invariants (list item 18) and DXT5 colour order (item 25) ---------------------------------------
+// --- DXT block invariants and DXT5 colour order ---------------------------------------
 
 // The colour endpoints of every block the encoder writes are ordered for the mode it means: c0 > c1
 // (four colours) unless the block is index 0 throughout, and for punch-through DXT1 a block with
@@ -1317,7 +1316,7 @@ fn dxt5_block_with_c0_below_c1_decodes_with_the_3_colour_palette() {
     );
 }
 
-// --- big flat image (list item 17) -----------------------------------------------------------------------------------
+// --- big flat image -----------------------------------------------------------------------------------
 
 // A flat black `_co` at the largest size: AVGC is 1,1,1 with alpha 255 (ImageToPAA gives 1 for
 // opaque black in the linear classes, 0 in the data classes; seen on a 512x512 `_co` and on the

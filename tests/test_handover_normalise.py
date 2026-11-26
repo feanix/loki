@@ -2,7 +2,7 @@
 and a 4096x4096 DXT5 whose mip 0 overflows the PAA length field says so (no hand-over).
 
 Why: ImageToPAA mangles grey and low-depth PNGs, fails 16-bit RGBA / grey+alpha / palette+tRNS, and ignores tRNS
-colour keys (the deep scan, findings F1 to F3). The real-tool tests are skipped when Arma 3 Tools is absent.
+colour keys. The real-tool tests are skipped when Arma 3 Tools is absent.
 Inputs are generated here; the PAA is read back with the crate's own decoder (`paa-proto decode`)."""
 
 import math
@@ -248,7 +248,7 @@ def test_resize_and_normalise_share_one_copy(tmp_path):
         assert im.size == (4, 4) and im.mode == "RGB"
 
 
-# --- F5: MipTooLarge --------------------------------------------------------------------------------------
+# --- MipTooLarge --------------------------------------------------------------------------------------
 
 
 def test_incompressible_4096_dxt5_has_its_own_message_and_no_handover(tmp_path, monkeypatch):

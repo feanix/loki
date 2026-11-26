@@ -1,6 +1,6 @@
 # Command line
 
-`Loki-cli.exe` (next to `Loki.exe`) converts PNGs without the window and exits, so it fits scripts, build steps and batch jobs. `Loki.exe` itself stays windowed: `Loki.exe <inputs...>` only prints a pointer to `Loki-cli.exe` and exits with 2. The command line does not read or change the window's settings or file list, and has no watch mode. In PowerShell, run it from its folder as `.\Loki-cli.exe` (or add the folder to PATH).
+`Loki-cli.exe` (next to `Loki.exe`) converts PNG, TGA and JPG pictures without the window and exits, so it fits scripts, build steps and batch jobs. `Loki.exe` itself stays windowed: `Loki.exe convert ...` only prints a pointer to `Loki-cli.exe` and exits with 2 (any other file arguments open the window with those files listed). The command line does not read or change the window's settings or file list, and has no watch mode. In PowerShell, run it from its folder as `.\Loki-cli.exe` (or add the folder to PATH).
 
     Loki-cli.exe textures\wall_co.png
     Loki-cli.exe textures\*_co.png --max-size 1024
@@ -12,7 +12,7 @@
 
 Converting is the default action. The 0.3.0 form `Loki-cli.exe convert <inputs...>` still works; only the bare first word `convert` means the command, so to convert a file or folder literally named `convert`, write `.\convert` (or any other path form).
 
-Inputs are PNG files, glob patterns (Loki expands them itself, since cmd and PowerShell do not) and folders (their `*.png`; add `--recursive` for subfolders). Each PAA is written beside its PNG, with the same routing as the window: the Loki converter, ImageToPAA for the files listed in [CONVERTER.md](CONVERTER.md), "needs Arma 3 Tools" when it is absent, non-power-of-two PNGs flagged and not converted (unless `--size` is given, see [Output size](#output-size)). Every given file is converted unless you pass `--skip-up-to-date`.
+Inputs are PNG, TGA and JPG files (`.png`, `.tga`, `.jpg`, `.jpeg`, any case), glob patterns (Loki expands them itself, since cmd and PowerShell do not) and folders (their `*.png`, `*.tga`, `*.jpg` and `*.jpeg`; add `--recursive` for subfolders). Each PAA is written beside its source with the same stem (`wall_co.tga` gives `wall_co.paa`), and the stem decides the texture type exactly as for a PNG. The result for a TGA or JPG equals the result for a PNG of the same pixels. If two sources would write the same PAA (`wall_co.png` and `wall_co.tga` in one folder), both are flagged with a message naming the other file and neither is converted until one is removed. JPG is lossy: use PNG or TGA for normal maps and masks. Loki refuses CMYK JPGs and TGA variants it cannot decode, with a message saying why. Routing is the same as the window: the Loki converter, ImageToPAA for the files listed in [CONVERTER.md](CONVERTER.md), "needs Arma 3 Tools" when it is absent, non-power-of-two PNGs flagged and not converted (unless `--size` is given, see [Output size](#output-size)). Every given file is converted unless you pass `--skip-up-to-date`.
 
 ## Options
 
@@ -53,7 +53,7 @@ The same list is at the end of `Loki-cli.exe --help`.
 
 - 0  all files converted or up to date
 - 1  any file flagged, needing Arma 3 Tools, or failed
-- 2  usage error (bad option, no PNG matched)
+- 2  usage error (bad option, no picture file matched)
 
 ## PowerShell notes
 

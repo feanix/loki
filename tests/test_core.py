@@ -30,7 +30,7 @@ def ok_runner(tool, src, dst):
     dst.write_bytes(paa_bytes(*Image.open(src).size))
 
 
-# --- criterion 1: one file ---
+# --- one file ---
 def test_file_key_is_the_one_identity_rule(tmp_path):
     p = tmp_path / "Tex" / "A.png"
     assert core.file_key(p) == os.path.normcase(os.path.abspath(p))
@@ -76,7 +76,7 @@ def test_unreadable_png_flagged(tmp_path):
     assert e.status == "flagged" and e.reason.startswith("cannot read:") and e.size is None
 
 
-# --- criterion 2: power of two ---
+# --- power of two ---
 def test_non_pow2_flagged_with_reason(tmp_path):
     mk(tmp_path / "odd.png", (1000, 700))
     mk(tmp_path / "ok.png", (1024, 512))
@@ -88,7 +88,7 @@ def test_non_pow2_flagged_with_reason(tmp_path):
     assert got["ok.png"].status == "needs_converting"
 
 
-# --- criterion 3: max size ---
+# --- max size ---
 @pytest.mark.parametrize(
     "w,h,cap,want",
     [
@@ -146,7 +146,7 @@ def test_under_cap_passed_straight_through(tmp_path, monkeypatch):
     assert srcs == [png]
 
 
-# --- criterion 4: discovery ---
+# --- discovery ---
 def fake_steam(tmp_path):
     root = tmp_path / "Steam"
     lib2 = tmp_path / "Lib2"
@@ -191,7 +191,7 @@ def test_malformed_vdf_does_not_crash(tmp_path):
         core.find_imagetopaa(steam_roots=lambda: [root])
 
 
-# --- criterion 5 (failure paths; real tool in test_core_e2e.py) ---
+# --- failure paths (real tool in test_core_e2e.py) ---
 def test_convert_failure_returns_error_and_keeps_old_paa(tmp_path, monkeypatch):
     png = mk(tmp_path / "f.png")
     paa = tmp_path / "f.paa"

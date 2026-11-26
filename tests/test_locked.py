@@ -131,7 +131,7 @@ def test_newer_save_supersedes_a_pending_retry(tmp_path):
     pool.shutdown()
 
 
-# --- criterion 2: long lock is quiet and backs off ---
+# --- long lock is quiet and backs off ---
 def test_long_lock_backs_off_and_converts_once_on_release(tmp_path):
     pngs, keys, _s, rec, pool, clock, w = setup(tmp_path)
     resave(pngs[0], 5000)
@@ -188,7 +188,7 @@ def test_convert_on_a_locked_png_asks_for_a_retry(tmp_path):
     assert not missing.ok and not missing.retry
 
 
-# --- criterion 5: bulk, seeded half locked 2-6 s (fake clock, real locks) ---
+# --- bulk, seeded half locked 2-6 s (fake clock, real locks) ---
 def test_bulk_twenty_rewritten_half_locked_all_converted_once(tmp_path):
     pngs, _keys, _s, rec, pool, clock, w = setup(tmp_path, n=20)
     rng = random.Random(15)
@@ -217,7 +217,7 @@ def test_bulk_twenty_rewritten_half_locked_all_converted_once(tmp_path):
     pool.shutdown()
 
 
-# --- criteria 2 and 4 through App (pool path, real threads) ---
+# --- through App (pool path, real threads) ---
 def wait(app, cond, timeout=10.0):
     end = time.monotonic() + timeout
     while not cond():

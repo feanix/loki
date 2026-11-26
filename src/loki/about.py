@@ -14,7 +14,7 @@ COPYRIGHT = "© 2026 Astrid Winters"
 def about_text() -> str:
     return (
         f"Loki {__version__}\n"
-        "Drag PNG textures onto the window; Loki converts them to Arma 3 PAA, on demand or when you save them.\n"
+        "Drag PNG, TGA or JPG textures onto the window; Loki converts them to Arma 3 PAA, on demand or when you save them.\n"
         f"{COPYRIGHT}\n"
         f"{LICENSE_NAME}\n"
         "Loki uses Bohemia Interactive's ImageToPAA (from Arma 3 Tools, not included)."

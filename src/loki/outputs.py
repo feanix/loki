@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import os
 import threading
 import time
@@ -25,7 +26,10 @@ from pathlib import Path
 VERSION = 1
 ENV_PATH = "LOKI_OUTPUTS"
 _LOCK_WAIT = 30.0  # seconds to wait for another process before giving up on a write
+_WRITE_WAIT = 5.0  # seconds a record write keeps retrying a locked store before it logs and gives up
+_WRITE_PAUSE = 0.1
 _thread_lock = threading.Lock()
+log = logging.getLogger(__name__)
 
 
 def store_path() -> Path:
@@ -108,7 +112,9 @@ def _write(path: Path, entries: dict) -> None:
     tmp = path.with_name(f"{path.name}.{os.getpid()}-{threading.get_ident()}.tmp")
     try:
         tmp.write_text(json.dumps({"version": VERSION, "entries": entries}, indent=1), encoding="utf8")
-        os.replace(tmp, path)
+        from loki import core  # late: core imports this module
+
+        core._replace_retrying(tmp, path)  # the PAA write's retry, for a reader briefly holding the old store
     finally:
         with contextlib.suppress(OSError):
             tmp.unlink()
@@ -121,13 +127,20 @@ def remember(paa: str | Path, settings: str) -> None:
     if sig is None:
         return
     path = store_path()
-    try:
-        with _locked(path):
-            entries = _load(path)
-            entries[_key(paa)] = {"size": sig[0], "mtime_ns": sig[1], "settings": settings}
-            _write(path, entries)
-    except OSError:
-        pass
+    deadline = time.monotonic() + _WRITE_WAIT
+    while True:
+        try:
+            with _locked(path):
+                entries = _load(path)
+                entries[_key(paa)] = {"size": sig[0], "mtime_ns": sig[1], "settings": settings}
+                _write(path, entries)
+            return
+        except OSError as exc:
+            # A transient lock (virus scanner, indexer) on the store or its temp file: try again with a pause.
+            if time.monotonic() >= deadline:
+                log.warning("could not record output settings for %s in %s: %s", paa, path, exc)
+                return
+            time.sleep(_WRITE_PAUSE)
 
 
 def forget(paa: str | Path) -> None:

@@ -100,7 +100,7 @@ def test_criterion1_no_folder_anywhere(env):
     assert "  files: 0" in d
     text = r.stdout.lower()
     assert "choose folder" not in text and "subfolder" not in text and "folder:" not in text
-    assert "drag png files onto the window" in text
+    assert "drag png, tga or jpg files onto the window" in text
     saved = json.loads(env["settings"].read_text(encoding="utf-8")) if env["settings"].exists() else {}
     assert not {"folder", "include_subfolders", "bake", "max_size"} & set(saved)
 
@@ -117,7 +117,7 @@ def test_criterion2_drop_mixed_files_adds_rows_only(env):
     first, second, third, listing = blocks(r.stdout)
     assert [x.split(" | ")[0].split(os.sep)[-1] for x in rows_of(first)] == ["a.png", "c.png"]
     assert row(first, "a.png") == "a.png | max=off ▾ | auto watch=☐ off | needs_converting | 64x64"
-    assert "status: Added 2 files; skipped 2 not PNG" in first
+    assert "status: Added 2 files; skipped 2 not PNG, TGA or JPG" in first
     names = [x.split(" | ")[0].split(os.sep)[-1] for x in rows_of(second)]
     assert names == ["a.png", "c.png", "sp ace.png"]  # the re-drop with another case added nothing
     note = "skipped 1 not found, 1 already listed" if os.name == "nt" else "skipped 1 not found"
@@ -230,7 +230,7 @@ def test_criterion6_persistence_missing_and_recovery(env):
     assert rows_of(gone)[0] == rows_of(before)[0]
     assert row(gone, "b.png") == "b.png | max=256 ▾ | auto watch=☐ off | missing | ?"
     assert row(gone, "a.png").startswith("a.png | max=off ▾ | auto watch=☑ on")
-    assert "status: 3 png: 2 need converting, 0 flagged, 1 missing, 0 errors; auto watch on for 1" in gone
+    assert "status: 3 files: 2 need converting, 0 flagged, 1 missing, 0 errors; auto watch on for 1" in gone
     assert row(back, "b.png") == "b.png | max=256 ▾ | auto watch=☐ off | needs_converting | 128x64"
     # and a brand new process (second run, same settings file) sees the same list
     r2 = run(env, "dump\n")

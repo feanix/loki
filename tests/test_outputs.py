@@ -134,3 +134,59 @@ def test_parallel_conversions_with_jobs_record_every_file(tmp_path, capsys):
     assert cli.main([*(str(p) for p in pngs), "--size", "32x32", "--jobs", "4"]) == 0
     capsys.readouterr()
     assert len(json.loads(outputs.store_path().read_text())["entries"]) == 8
+
+
+def hold_open(path: Path):
+    """Open `path` on Windows with read/write sharing but no delete sharing; returns a close function."""
+    import ctypes
+    from ctypes import wintypes
+
+    create = ctypes.windll.kernel32.CreateFileW
+    create.restype = wintypes.HANDLE
+    create.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    handle = create(str(path), 0x80000000, 0x1 | 0x2, None, 3, 0x80, None)  # GENERIC_READ, share read+write, OPEN_EXISTING
+    assert handle not in (None, wintypes.HANDLE(-1).value)
+    return lambda: ctypes.windll.kernel32.CloseHandle(handle)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="share-mode locks are a Windows thing")
+def test_remember_rides_out_a_briefly_held_store(tmp_path):
+    a = png(tmp_path / "a_co.paa.png", (8, 8))
+    paa = tmp_path / "a_co.paa"
+    paa.write_bytes(b"x")
+    outputs.remember(paa, "first")  # the store now exists
+    close = hold_open(outputs.store_path())
+    threading.Timer(0.8, close).start()
+    outputs.remember(paa, "second")
+    assert outputs.recorded(paa) == "second"
+    assert a.exists()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="share-mode locks are a Windows thing")
+def test_remember_logs_when_the_store_stays_held(tmp_path, monkeypatch, caplog):
+    monkeypatch.setattr(outputs, "_WRITE_WAIT", 0.5)
+    paa = tmp_path / "a_co.paa"
+    paa.write_bytes(b"x")
+    outputs.remember(paa, "first")
+    close = hold_open(outputs.store_path())
+    try:
+        with caplog.at_level("WARNING", logger="loki.outputs"):
+            outputs.remember(paa, "second")  # does not raise: the record is a cache
+    finally:
+        close()
+    assert "could not record output settings" in caplog.text
+    assert outputs.recorded(paa) == "first"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="share-mode locks are a Windows thing")
+def test_conversion_succeeds_when_the_store_stays_held(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(outputs, "_WRITE_WAIT", 0.3)
+    p = png(tmp_path / "a_co.png")
+    assert cli.main([str(p), "--size", "256x128"]) == 0
+    capsys.readouterr()
+    close = hold_open(outputs.store_path())
+    try:
+        assert cli.main([str(p), "--size", "128x64"]) == 0
+    finally:
+        close()
+    assert (tmp_path / "a_co.paa").exists()

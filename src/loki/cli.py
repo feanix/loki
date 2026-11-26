@@ -1,4 +1,4 @@
-"""Command line: `Loki-cli.exe <inputs...>` converts PNGs to PAA and exits (a leading `convert` is still accepted).
+"""Command line: `Loki-cli.exe <inputs...>` converts PNG, TGA and JPG pictures to PAA and exits (a leading `convert` is still accepted).
 
 Reuses the GUI's pieces (core.check_png / route / convert, pool.ConvertPool, the watcher's backoff
 schedule) and never reads or writes the GUI's settings or file list. No Tk. One line per file on stdout,
@@ -53,7 +53,7 @@ GUIDE_LINE = "Full guide: https://github.com/feanix/loki/blob/main/docs/CLI.md" 
 EXIT_CODE_LINES = (
     "0  all files converted or up to date",
     "1  any file flagged, needing Arma 3 Tools, or failed",
-    "2  usage error (bad option, no PNG matched)",
+    "2  usage error (bad option, no picture file matched)",
 )
 USAGE = "Loki-cli.exe [options] input [input ...]"
 NO_ARGS_LINE = "Run 'Loki-cli.exe --help' for all options."
@@ -97,16 +97,16 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="Loki-cli.exe",
         usage=USAGE,
         description=_wrap(
-            "Loki-cli.exe converts PNG textures to Arma 3 PAA files and exits. Each PAA is written beside "
-            "its PNG. Inputs: PNG files, glob patterns (expanded by Loki), folders (their *.png; add "
-            "--recursive for subfolders). The built-in converter does most files. These go to Bohemia's "
+            "Loki-cli.exe converts PNG, TGA and JPG textures to Arma 3 PAA files and exits. Each PAA is written "
+            "beside its source. Inputs: picture files, glob patterns (expanded by Loki), folders (their *.png, "
+            "*.tga, *.jpg, *.jpeg; add --recursive for subfolders). The built-in converter does most files. These go to Bohemia's "
             "ImageToPAA automatically: " + HANDOVER_CASES + "."
         ),
         epilog=EPILOG,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     ap.add_argument("--version", action="version", version=f"Loki {__version__}")
-    ap.add_argument("inputs", nargs="+", metavar="input", help="PNG file, glob pattern or folder")
+    ap.add_argument("inputs", nargs="+", metavar="input", help="PNG, TGA or JPG file, glob pattern or folder")
     ap.add_argument("--max-size", metavar="SIZE", help="longest side: off, 2048, 1024, 512, 256 (default off)")
     ap.add_argument("--size", metavar="WxH", help="output size, powers of two 1-4096 (default: PNG size)")
     ap.add_argument("--fit", metavar="MODE", help="stretch, contain (default) or pad (no scaling)")
@@ -138,7 +138,7 @@ class _Found:
 
 def _folder_pngs(folder: Path, recursive: bool) -> list[Path]:
     it = folder.rglob("*") if recursive else folder.iterdir()
-    return sorted(p for p in it if p.suffix.lower() == ".png" and p.is_file())
+    return sorted(p for p in it if core.is_source(p) and p.is_file())
 
 
 def expand_inputs(inputs: list[str], recursive: bool) -> list[_Found]:
@@ -158,11 +158,11 @@ def expand_inputs(inputs: list[str], recursive: bool) -> list[_Found]:
             for f in _folder_pngs(p, recursive):
                 add(f)
         elif p.is_file():
-            add(p, None if p.suffix.lower() == ".png" else "not a PNG file")
+            add(p, None if core.is_source(p) else "not a PNG, TGA or JPG file")
         elif glob.has_magic(text):  # the shells on Windows do not expand globs
             for m in sorted(glob.glob(text, recursive=True)):
                 mp = Path(m)
-                if mp.is_file() and mp.suffix.lower() == ".png":
+                if mp.is_file() and core.is_source(mp):
                     add(mp)
                 elif mp.is_dir():
                     for f in _folder_pngs(mp, recursive):
@@ -333,7 +333,7 @@ def _convert(args: argparse.Namespace, out) -> int:
     max_size, size, tool = _expect_files(args)
     files = expand_inputs(args.inputs, args.recursive)
     if not files:
-        raise UsageError("no PNG files matched the inputs")
+        raise UsageError("no PNG, TGA or JPG files matched the inputs")
     t0 = time.monotonic()
     run = _Run(args, max_size, size, tool, out)
     run.run(files)

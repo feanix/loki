@@ -1,7 +1,7 @@
-"""Python side of the encoder test-gap bundle.
+"""Python side of the extra encoder tests.
 
 What is here and why:
-* tRNS colour keys end to end (item 3) and the 16-bit key scaling in core._to_8bit_rgb (review).
+* tRNS colour keys end to end and the 16-bit key scaling in core._to_8bit_rgb.
 * Sides below 4 and error detail at the Python boundary (lock, missing file, panic text, bad PLTE).
 * The non-power-of-two refusal text (the 8192 hand-over is test_loki_converter.test_route).
 
@@ -24,7 +24,7 @@ from test_handover_normalise import (  # noqa: F401 (paa_proto is a fixture)
     write_png,
 )
 
-# --- item 3: tRNS colour key on an RGB PNG ------------------------------------------------------------------
+# --- tRNS colour key on an RGB PNG ------------------------------------------------------------------
 
 
 def _rgb8key(p: Path) -> list[list[int]]:
@@ -50,7 +50,7 @@ def _alpha_error(got, alpha) -> tuple[float, int]:
 
 
 def test_colour_key_rgb_as_ca_keeps_the_cut_out_in_the_loki_encoder(tmp_path, paa_proto):  # noqa: F811
-    """Loki's own `_ca` route turns the key into alpha 0: alpha mean within 1 level of the ideal (F3)."""
+    """Loki's own `_ca` route turns the key into alpha 0: alpha mean within 1 level of the ideal."""
     png = tmp_path / "key_ca.png"
     alpha = _rgb8key(png)
     res = core.convert(png, None, None, core.LOKI)
@@ -73,7 +73,7 @@ def test_colour_key_rgb_as_co_keeps_the_cut_out_in_the_loki_encoder(tmp_path, pa
 @needs_tool
 def test_colour_key_rgb_as_co_through_imagetopaa_keeps_the_cut_out(tmp_path, paa_proto):  # noqa: F811
     """The hand-over copy turns the key into real alpha, which ImageToPAA ignores as a key: the DXT1 mask
-    has the 16x16 hole (D-G-3 was alpha +15.9 on the whole image)."""
+    has the 16x16 hole (it was alpha +15.9 on the whole image)."""
     png = tmp_path / "key_co.png"
     alpha = _rgb8key(png)
     res = core.convert(png, TOOL, None, core.BOHEMIA)  # the Bohemia converter is chosen: the hand-over copy path
@@ -116,11 +116,11 @@ def test_16bit_grey_colour_key_is_scaled_to_8_bit_and_the_keyed_texels_are_trans
         ]  # fmt: skip
 
 
-# --- item 5: sizes the encoder cannot take, with the tool present ----------------------------------------------
+# --- sizes the encoder cannot take, with the tool present ----------------------------------------------
 
 
 def test_non_power_of_two_png_is_refused_with_a_clear_text_and_not_handed_over(tmp_path, monkeypatch):
-    """Both converters refuse a 100x100 texture (D-B-3); route() still picks Loki (it never looks at the
+    """Both converters refuse a 100x100 texture; route() still picks Loki (it never looks at the
     size), and Loki's message names the rule."""
     called = []
     monkeypatch.setattr(core, "_run_tool", lambda *a: called.append(a))
@@ -132,7 +132,7 @@ def test_non_power_of_two_png_is_refused_with_a_clear_text_and_not_handed_over(t
     assert res.error == "Loki converter: size 100x100: only power-of-two sizes are supported"
 
 
-# --- item 4 (F9): a lock inside `_paa.encode` -------------------------------------------------------------------
+# --- a lock inside `_paa.encode` -------------------------------------------------------------------
 
 
 @windows_only
@@ -172,7 +172,7 @@ def test_a_panic_is_reported_with_its_message():
 
 
 def test_a_bad_plte_is_a_value_error_not_a_panic(tmp_path):
-    """F8: a 25-byte PLTE panicked inside the png crate; load_png now rejects it first."""
+    """A 25-byte PLTE panicked inside the png crate; load_png now rejects it first."""
     import zlib
 
     def chunk(name: bytes, data: bytes) -> bytes:
@@ -192,7 +192,7 @@ def test_mip_too_large_keeps_its_own_exception():
     assert issubclass(_paa.MipTooLarge, ValueError) and _paa.MipTooLarge is not ValueError
 
 
-# --- item 6 (F4): sides below 4 ------------------------------------------------------------------------------------
+# --- sides below 4 ------------------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("suffix", ["_raw", "_4444", "_gs", ""])

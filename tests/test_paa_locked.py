@@ -62,7 +62,7 @@ def test_held_paa_replace_is_winerror_5_and_probe_says_sharing_violation(tmp_pat
     assert not core._held_open(PermissionError(13, "x"), tmp_path / "gone.paa")
 
 
-# --- criteria 1 and 3: core.convert ---
+# --- core.convert ---
 def test_convert_on_held_paa_asks_for_retry_and_leaves_nothing(tmp_path):
     png, paa = png_with_old_paa(tmp_path)
     with hold(paa):
@@ -83,7 +83,7 @@ def test_loki_converter_path_also_waits_on_held_paa(tmp_path):
     assert core.convert(png, None, None, core.LOKI).ok
 
 
-# --- criterion 4: anything that is not a hold stays an error ---
+# --- anything that is not a hold stays an error ---
 def test_non_lock_failures_are_errors_not_waits(tmp_path, monkeypatch):
     png, paa = png_with_old_paa(tmp_path)
 
@@ -160,7 +160,7 @@ def test_save_waits_while_paa_held_then_converts_once(tmp_path, hold_seconds):
     pool.shutdown()
 
 
-# --- criterion 2 and the row text, through App (real pool and threads) ---
+# --- the row text, through App (real pool and threads) ---
 def test_app_bake_waits_on_held_paa_row_says_paa_in_use_then_converts(tmp_path):
     png, paa = png_with_old_paa(tmp_path)
     app = make_app(tmp_path)

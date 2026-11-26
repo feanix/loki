@@ -178,7 +178,7 @@ def run_scenario(scenario: Path, settings_path: str, out=print, err=sys.stderr) 
 
 def _run(argv: list[str] | None = None) -> int:
     _ensure_streams()
-    ap = argparse.ArgumentParser(prog="loki", description="Convert PNG textures to PAA.")
+    ap = argparse.ArgumentParser(prog="loki", description="Convert PNG, TGA or JPG textures to PAA.")
     ap.add_argument("--settings", help="settings JSON path (default: %%APPDATA%%/Loki/settings.json)")
     ap.add_argument("--scenario", help="run a headless scenario file and print state digests")
     ap.add_argument("--screenshot", metavar="OUT.png", help="capture the window offscreen and exit")
@@ -193,6 +193,7 @@ def _run(argv: list[str] | None = None) -> int:
         metavar="FILE",
         help="write scenario or screenshot output and errors to FILE (the windowed exe has no console to print to)",
     )
+    ap.add_argument("inputs", nargs="*", metavar="input", help="files or folders to add to the list (as a window drop)")
     args = ap.parse_args(argv)
     if args.scenario:
         if not args.settings:
@@ -211,7 +212,8 @@ def _run(argv: list[str] | None = None) -> int:
         else:
             gui.screenshot(args.settings, Path(args.screenshot), drop=args.drop)
         return 0
-    gui.run_window(args.settings)
+    # Files dropped on the exe icon arrive as plain arguments; relative ones resolve against the cwd.
+    gui.run_window(args.settings, [os.path.abspath(p) for p in args.inputs] or None)
     return 0
 
 
@@ -226,7 +228,7 @@ CLI_POINTER = (
 
 
 def _point_to_cli() -> int:
-    """`Loki.exe convert ...` or `Loki.exe <input>`: no window; say where the CLI lives on stderr and exit 2.
+    """`Loki.exe convert ...`: no window; say where the CLI lives on stderr and exit 2.
 
     The windowed exe has no console of its own, so when stderr is not already redirected it attaches to the
     parent's console (cmd, PowerShell) and writes there."""
@@ -247,9 +249,9 @@ def _point_to_cli() -> int:
 def main(argv: list[str] | None = None) -> int:
     """Run Loki; an unexpected crash is written to crash.log (and shown in a dialog on the GUI path)."""
     first = (sys.argv[1:] if argv is None else argv)[:1]
-    # `convert` or a bare input (a PNG, folder or pattern) is a CLI call: no window, point to Loki-cli.exe.
-    # Options (--screenshot, --settings, scenario flags) are not.
-    if first and not first[0].startswith("-"):
+    # `convert` is the old CLI form: no window, point to Loki-cli.exe. Any other bare argument is a file or
+    # folder dropped on the exe icon and opens the window with it; options (--screenshot, ...) are handled below.
+    if first and first[0].lower() == "convert":
         return _point_to_cli()
     for stream in (sys.stdout, sys.stderr):  # the digest carries glyphs a cp1252 console cannot print
         if stream is not None and hasattr(stream, "reconfigure"):

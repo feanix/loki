@@ -4,7 +4,9 @@ How to use the Loki window. For the command line see [CLI.md](CLI.md); for conve
 
 ## Adding files
 
-Drag one or more PNG files from Explorer onto the Loki window. Each file gets a row, from any folder, mixed as you like. Adding a file only lists it: nothing is written to disk. Dropping a file that is already listed does nothing. Folders and files that are not PNG are ignored, and the status bar says how many were skipped.
+Drag one or more PNG, TGA or JPG files (`.png`, `.tga`, `.jpg`, `.jpeg`, any case) from Explorer onto the Loki window. The PAA is written beside the source with the same stem (`wall_co.tga` gives `wall_co.paa`), and a TGA or JPG gives the same result as a PNG of the same pixels. JPG is lossy, so PNG or TGA is better for normal maps and masks; CMYK JPGs and TGA variants Loki cannot decode are flagged with the reason. If two sources would write the same PAA (`wall_co.png` and `wall_co.tga` in one folder), both rows are flagged naming the other file and neither is converted until you remove one. Each file gets a row, from any folder, mixed as you like. Adding a file only lists it: nothing is written to disk. Dropping a file that is already listed does nothing. Folders and files that are not PNG, TGA or JPG are ignored, and the status bar says how many were skipped.
+
+You can also drop PNG, TGA or JPG files on the `Loki.exe` icon in Explorer: Loki opens with them listed, the same as a drop on the window, and converts nothing until you ask. If Loki is already running, this opens a second window.
 
 ## Columns
 

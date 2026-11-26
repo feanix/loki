@@ -415,4 +415,4 @@ def test_help_and_readme_document_the_options_and_the_four_defaults(capsys):
     for colour in ("128,128,255,255", "255,255,255,255", "0,0,0,0", "0,0,0,255"):
         assert colour in help_text and colour in readme, colour
     assert "--pad-color" in readme and "center" in readme
-    assert "or set an output size" in readme  # criterion 10: the power-of-two messages point at --size
+    assert "or set an output size" in readme  # the power-of-two messages point at --size

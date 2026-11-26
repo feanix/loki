@@ -1,4 +1,4 @@
-"""Sides below 4 px through the Python boundary and `core.convert` (0.3.1, F4 of the deep scan).
+"""Sides below 4 px through the Python boundary and `core.convert` (0.3.1).
 
 Why: Loki's own encoder writes the ARGB file ImageToPAA writes for 1x1, 2x2, 1xN and Nx1 (no hand-over), and
 refuses forced-DXT classes with a message that names the 4 px minimum (ImageToPAA fails there too and leaves a

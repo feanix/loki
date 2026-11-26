@@ -402,23 +402,26 @@ fn alpha_levels(a0: u8, a1: u8) -> [u8; 8] {
     p
 }
 
-/// Best alpha level index per texel, and the squared error.
-fn alpha_assign(a: &[u8; 16], pal: &[u8; 8]) -> ([u8; 16], i64) {
+/// Best alpha level index per texel, and the squared error. Gives up with `None` as soon as the
+/// error reaches `limit`: a candidate that cannot beat the best so far needs no indices.
+fn alpha_assign(a: &[u8; 16], pal: &[u8; 8], limit: i64) -> Option<([u8; 16], i64)> {
     let mut idx = [0u8; 16];
     let mut err = 0i64;
     for i in 0..16 {
-        let (mut best, mut bi) = (i32::MAX, 0u8);
+        // Squared distance with the level number in the low 3 bits: the minimum is the nearest
+        // level, the lowest number on a tie, and it needs no branch per level.
+        let mut best = i32::MAX;
         for (k, &level) in pal.iter().enumerate() {
-            let d = (a[i] as i32 - level as i32).abs();
-            if d < best {
-                best = d;
-                bi = k as u8;
-            }
+            let d = a[i] as i32 - level as i32;
+            best = best.min(((d * d) << 3) | k as i32);
         }
-        idx[i] = bi;
-        err += (best * best) as i64;
+        idx[i] = (best & 7) as u8;
+        err += (best >> 3) as i64;
+        if err >= limit {
+            return None;
+        }
     }
-    (idx, err)
+    Some((idx, err))
 }
 
 /// Best alpha endpoints found so far for one block.
@@ -432,12 +435,86 @@ struct AlphaFit {
 impl AlphaFit {
     /// Try the endpoint pair `a0`, `a1`; keep it when its error is strictly lower.
     fn consider(&mut self, a: &[u8; 16], a0: u8, a1: u8) {
-        let (idx, err) = alpha_assign(a, &alpha_levels(a0, a1));
-        if err < self.err {
+        // A texel outside the span of the interpolated levels is at least as far from the nearest
+        // end of that span (or, in the 6-level mode, from 0 or 255): a floor that costs one pass
+        // and rules out most pairs before any level is tried.
+        let (lo, hi, six) = (a0.min(a1) as i32, a0.max(a1) as i32, a0 <= a1);
+        let mut floor = 0i32;
+        for &v in a {
+            let v = v as i32;
+            let mut d = (lo - v).max(v - hi).max(0);
+            if six {
+                d = d.min(v).min(255 - v);
+            }
+            floor += d * d;
+        }
+        if floor as i64 >= self.err {
+            return;
+        }
+        if let Some((idx, err)) = alpha_assign(a, &alpha_levels(a0, a1), self.err) {
             *self = AlphaFit { err, a0, a1, idx };
         }
     }
 }
+
+/// Refine the best fit by least squares on its indices (up to 3 rounds, a round is kept only
+/// when the error drops, so more rounds can never hurt).
+fn refine_ls(a: &[u8; 16], best: &mut AlphaFit) {
+    for _ in 0..3 {
+        let (a0, a1) = (best.a0, best.a1);
+        let six = a0 <= a1;
+        // Weight of endpoint 0 per index. In the 6-level mode indices 6 and 7 are fixed
+        // 0 and 255, not endpoint blends: the -1 marks them as skipped.
+        let w: [f32; 8] = if six {
+            [1.0, 0.0, 0.8, 0.6, 0.4, 0.2, -1.0, -1.0]
+        } else {
+            [
+                1.0,
+                0.0,
+                6.0 / 7.0,
+                5.0 / 7.0,
+                4.0 / 7.0,
+                3.0 / 7.0,
+                2.0 / 7.0,
+                1.0 / 7.0,
+            ]
+        };
+        let (mut aa, mut ab, mut bb, mut ra, mut rb) = (0f32, 0f32, 0f32, 0f32, 0f32);
+        for (&k, &v) in best.idx.iter().zip(a.iter()) {
+            let wk = w[k as usize];
+            if wk < 0.0 {
+                continue;
+            }
+            let (x, y) = (wk, 1.0 - wk);
+            aa += x * x;
+            ab += x * y;
+            bb += y * y;
+            ra += x * v as f32;
+            rb += y * v as f32;
+        }
+        let Some((v0, v1)) = solve_endpoints(aa, ab, bb, ra, rb) else {
+            break;
+        };
+        let n0 = v0.round().clamp(0.0, 255.0) as u8;
+        let n1 = v1.round().clamp(0.0, 255.0) as u8;
+        let before = best.err;
+        // Endpoint order selects the mode: a0 > a1 is 8-level, a0 <= a1 is 6-level.
+        if six {
+            best.consider(a, n0.min(n1), n0.max(n1));
+        } else {
+            best.consider(a, n0.max(n1), n0.min(n1));
+        }
+        if best.err >= before {
+            break;
+        }
+    }
+}
+
+/// Smallest squared error of the first fit for which the all-pairs and local search run.
+const ALPHA_SEARCH_MIN_ERR: i64 = 160;
+
+/// Most distinct values (with 0 and 255) a block may have for the all-pairs and local search.
+const ALPHA_SEARCH_MAX_VALUES: usize = 12;
 
 /// Fit an alpha block: returns 8 bytes (two endpoints + 48 bits of 3-bit indices).
 fn fit_alpha(a: &[u8; 16]) -> [u8; 8] {
@@ -462,56 +539,54 @@ fn fit_alpha(a: &[u8; 16]) -> [u8; 8] {
         } else {
             best.consider(a, 0, 255); // pure 0/255 content
         }
-        // Refinement of the best so far by least squares on its indices (up to 3 rounds, a
-        // round is kept only when the error drops, so more rounds can never hurt).
-        for _ in 0..3 {
-            let (a0, a1) = (best.a0, best.a1);
-            let six = a0 <= a1;
-            // Weight of endpoint 0 per index. In the 6-level mode indices 6 and 7 are fixed
-            // 0 and 255, not endpoint blends: the -1 marks them as skipped.
-            let w: [f32; 8] = if six {
-                [1.0, 0.0, 0.8, 0.6, 0.4, 0.2, -1.0, -1.0]
-            } else {
-                [
-                    1.0,
-                    0.0,
-                    6.0 / 7.0,
-                    5.0 / 7.0,
-                    4.0 / 7.0,
-                    3.0 / 7.0,
-                    2.0 / 7.0,
-                    1.0 / 7.0,
-                ]
-            };
-            let (mut aa, mut ab, mut bb, mut ra, mut rb) = (0f32, 0f32, 0f32, 0f32, 0f32);
-            for (&k, &v) in best.idx.iter().zip(a.iter()) {
-                let wk = w[k as usize];
-                if wk < 0.0 {
-                    continue;
+        refine_ls(a, &mut best);
+        // Every endpoint pair among the block's own values and 0 and 255, in both modes: the
+        // best pair is usually one of these, and the interpolated levels then land between them.
+        // Skipped when the first fit is already close (squared error under 10 per texel on
+        // average): a better pair gains almost nothing there, and such blocks are most of a normal
+        // map. Also skipped for blocks of many distinct values (noise): the pairs cost the most
+        // there.
+        let mut search = false;
+        if best.err >= ALPHA_SEARCH_MIN_ERR {
+            let mut vals = [0u8; 18];
+            vals[..16].copy_from_slice(a);
+            vals[17] = 255;
+            vals.sort_unstable();
+            let mut n = 0;
+            for k in 0..vals.len() {
+                if k == 0 || vals[k] != vals[k - 1] {
+                    vals[n] = vals[k];
+                    n += 1;
                 }
-                let (x, y) = (wk, 1.0 - wk);
-                aa += x * x;
-                ab += x * y;
-                bb += y * y;
-                ra += x * v as f32;
-                rb += y * v as f32;
             }
-            let Some((v0, v1)) = solve_endpoints(aa, ab, bb, ra, rb) else {
-                break;
-            };
-            let n0 = v0.round().clamp(0.0, 255.0) as u8;
-            let n1 = v1.round().clamp(0.0, 255.0) as u8;
-            let before = best.err;
-            // Endpoint order selects the mode: a0 > a1 is 8-level, a0 <= a1 is 6-level.
-            if six {
-                best.consider(a, n0.min(n1), n0.max(n1));
-            } else {
-                best.consider(a, n0.max(n1), n0.min(n1));
+            let vals = &vals[..n];
+            search = n <= ALPHA_SEARCH_MAX_VALUES;
+            if search {
+                for (j, &lower) in vals.iter().enumerate() {
+                    for &upper in &vals[j + 1..] {
+                        best.consider(a, upper, lower); // 8-level: a0 > a1
+                        best.consider(a, lower, upper); // 6-level: a0 <= a1
+                    }
+                }
+            }
+        }
+        // Local search: every pair within 1 of the best, in its own mode, repeated while it helps.
+        while search {
+            let (b0, b1, before) = (best.a0, best.a1, best.err);
+            for d0 in -1i32..=1 {
+                for d1 in -1i32..=1 {
+                    let n0 = (b0 as i32 + d0).clamp(0, 255) as u8;
+                    let n1 = (b1 as i32 + d1).clamp(0, 255) as u8;
+                    if (n0 > n1) == (b0 > b1) && n0 != n1 {
+                        best.consider(a, n0, n1);
+                    }
+                }
             }
             if best.err >= before {
                 break;
             }
         }
+        refine_ls(a, &mut best);
     }
     // Pack the sixteen 3-bit indices into 48 bits, texel 0 in the lowest bits, stored
     // little-endian in bytes 2..8 (SPEC section 6).

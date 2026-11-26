@@ -1,4 +1,4 @@
-//! Tests for images with a side under 4 px (0.3.1, finding F4 of the deep scan).
+//! Tests for images with a side under 4 px (0.3.1).
 //!
 //! What ImageToPAA does there (observed on 40 classes, sizes 1x1, 2x2, 1x256, 256x1, 4x1, alpha
 //! opaque, 0/255 and soft):

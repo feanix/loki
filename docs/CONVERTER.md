@@ -2,6 +2,7 @@
 
 The dropdown at the top of the window picks the converter, and the choice is remembered. Switching it never marks existing PAAs as out of date: a row is "Up to date" or "Needs converting" from the PAA's size and age alone.
 
+- **Both converters** take PNG, TGA and JPG sources through one decoder: a TGA or JPG is decoded to 8-bit RGB or RGBA pixels and then handled exactly as a PNG of those pixels, so the PAA is the same. TGA: 8-bit grey, 16-bit (1555), 24-bit, 32-bit with alpha and colour-mapped, raw or RLE, either origin. JPG: baseline and progressive, grey and colour. CMYK JPGs are refused. A 16-bit TGA with no alpha bits in its header has no transparency.
 - **Loki converter** (default): Loki's own encoder, written in Rust and built into `Loki.exe`. A PNG bigger than 4096 on a side (up to 16384, and 8192x8192 pixels in all) is scaled down to 4096 first, shape kept, the way ImageToPAA does; Max size still applies on top.
 - **Bohemia ImageToPAA**: every file goes through Arma 3 Tools' `ImageToPAA.exe`.
 

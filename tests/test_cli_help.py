@@ -48,7 +48,7 @@ def test_guide_link_points_at_the_cli_doc():
 
 def test_help_has_sentence_short_form_and_convert_note(capsys):
     _code, out, _ = run(capsys, "--help")
-    assert "Loki-cli.exe converts PNG textures to Arma 3 PAA files and exits." in out
+    assert "Loki-cli.exe converts PNG, TGA and JPG textures to Arma 3 PAA files and exits." in out
     assert "usage: Loki-cli.exe [options] input [input ...]" in out
     assert "  Loki-cli.exe textures --recursive --skip-up-to-date" in out
     assert "The word 'convert' before the inputs is optional (0.3.0 scripts still work)." in out

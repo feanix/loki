@@ -66,6 +66,34 @@ def convert_workers(cpu_count: int | None = None) -> int:
     return min(CONVERT_WORKERS_MAX, max(1, (cpu or 1) - CONVERT_CPU_RESERVE))
 
 
+# Source picture types, lower case: the one list every "is this a source file" test uses.
+SOURCE_EXTS = (".png", ".tga", ".jpg", ".jpeg")
+_FORMAT_OF_EXT = {".png": "PNG", ".tga": "TGA", ".jpg": "JPEG", ".jpeg": "JPEG"}
+_FORMAT_LABEL = {".png": "PNG", ".tga": "TGA", ".jpg": "JPG", ".jpeg": "JPG"}
+
+
+def is_source(path: str | Path) -> bool:
+    """True when the file name ends in a source type (.png, .tga, .jpg, .jpeg), any case."""
+    return Path(path).suffix.lower() in SOURCE_EXTS
+
+
+def png_name(path: str | Path) -> str:
+    """The file name as a PNG of the same stem: the name the converters and output settings key on."""
+    return Path(path).stem + ".png"
+
+
+def other_source(path: Path) -> Path | None:
+    """Another source file beside `path` that would write the same .paa (same stem, other type), or None."""
+    stem = path.stem.lower()
+    try:
+        for p in sorted(path.parent.iterdir()):
+            if p.stem.lower() == stem and is_source(p) and p.name.lower() != path.name.lower() and p.is_file():
+                return p
+    except OSError:
+        return None
+    return None
+
+
 def file_key(path: str | Path) -> str:
     """The one identity rule for a listed file: absolute and case/slash-normalised (Windows).
     Every module compares files through this, none re-derives it."""
@@ -302,6 +330,17 @@ def paa_size(path: str | Path) -> tuple[int, int] | None:
     return width, height
 
 
+def source_problem(path: Path, im: Image.Image) -> str | None:
+    """Why an opened picture cannot be a source of its type (wrong content for the name, CMYK JPG), else None."""
+    ext = path.suffix.lower()
+    label = _FORMAT_LABEL.get(ext, "PNG")
+    if ext not in (".png", "") and im.format != _FORMAT_OF_EXT.get(ext):
+        return f"not a valid {label} (the file holds {im.format or 'unknown'} data)"
+    if im.format == "JPEG" and im.mode == "CMYK":
+        return "CMYK JPG is not supported: save it as RGB or grey"
+    return None
+
+
 def check_png(path: str | Path, max_size: int | None = None, size: OutputSize | None = None) -> PngEntry:
     """Status of one png. Missing and flagged win; a missing/older/unreadable/wrong-size .paa needs converting.
 
@@ -311,6 +350,7 @@ def check_png(path: str | Path, max_size: int | None = None, size: OutputSize | 
     try:
         with Image.open(path) as im:  # header only, no full decode
             png_size = im.size
+            problem = source_problem(path, im)
     except FileNotFoundError:
         return PngEntry(path, MISSING, None, None)
     except Exception as exc:  # noqa: BLE001 -- Pillow raises several types for corrupt files
@@ -320,13 +360,20 @@ def check_png(path: str | Path, max_size: int | None = None, size: OutputSize | 
         # Short, path-free reason for the row; the raw exception stays in `detail`.
         if isinstance(exc, Image.DecompressionBombError):  # Pillow's own pixel limit (about 179 million), well over what Loki loads
             why = LOAD_LIMIT_ADVICE
+        elif isinstance(exc, ValueError) and path.suffix.lower() == ".tga":  # e.g. a 32-bit colour map
+            why = "unsupported TGA variant"
         elif isinstance(exc, UnidentifiedImageError) or not isinstance(exc, OSError):
-            why = "not a valid PNG"
+            why = f"not a valid {_FORMAT_LABEL.get(path.suffix.lower(), 'PNG')}"
         elif isinstance(exc, PermissionError):  # here only winerror 5 and the like: not a lock
             why = "access denied"
         else:
             why = "unreadable"
         return PngEntry(path, FLAGGED, f"cannot read: {why}", None, detail)
+    if problem:
+        return PngEntry(path, FLAGGED, f"cannot read: {problem}", None)
+    twin = other_source(path)
+    if twin is not None:
+        return PngEntry(path, FLAGGED, f"same PAA as {twin.name}: remove one of them", png_size)
     w, h = png_size
     if size is None and not (_is_pow2(w) and _is_pow2(h)):
         reason = f"{w}x{h}: sides must be powers of two (e.g. {_nearest_pow2_hint(w, h)}) or set an output size"
@@ -348,7 +395,7 @@ def check_png(path: str | Path, max_size: int | None = None, size: OutputSize | 
         if have != (size.width, size.height):
             reason = f"PAA is {have[0]}x{have[1]}, output size wants {size.width}x{size.height}"
             return PngEntry(path, NEEDS_CONVERTING, reason, png_size)
-        if outputs.recorded(paa) != size.key(path.name):
+        if outputs.recorded(paa) != size.key(png_name(path)):
             return PngEntry(path, NEEDS_CONVERTING, "PAA was made with other output size settings", png_size)
         return PngEntry(path, UP_TO_DATE, None, png_size)
     want = target_size(w, h, max_size)
@@ -540,6 +587,49 @@ def _imagetopaa_input(png: Path, tdir: Path, max_size: int | None, size: OutputS
         return dest
 
 
+def _tga_bits(path: Path) -> tuple[int, int]:
+    """(bits per pixel, alpha bits) from a TGA header, (0, 0) when it is too short."""
+    with open(path, "rb") as f:
+        head = f.read(18)
+    return (head[16], head[17] & 0x0F) if len(head) == 18 else (0, 0)
+
+
+class _Refused(Exception):
+    """A source Loki refuses on purpose; the message is shown to the user as is."""
+
+
+def decode_to_png(src: Path, dest: Path) -> Path:
+    """Decode a TGA or JPG with Pillow and write its 8-bit RGB/RGBA pixels as a PNG at `dest`: the file both
+    converter routes then take exactly as they take a PNG of those pixels. Raises ValueError for a file
+    Loki refuses (the message names the problem). Grey, colour-mapped and 16-bit TGAs come out as RGB/RGBA."""
+    label = _FORMAT_LABEL.get(src.suffix.lower(), "picture")
+    try:
+        with Image.open(src) as im:
+            problem = source_problem(src, im)
+            if problem:
+                raise _Refused(problem)
+            im.load()
+            if im.format == "TGA" and im.mode == "RGBA" and _tga_bits(src) == (16, 0):
+                im = im.convert("RGB")  # 16-bit with no alpha bit: the top bit is unused, not transparency
+            elif im.format == "TGA" and im.mode == "RGBA" and _tga_bits(src)[0] == 16:
+                r, g, b, a = im.split()  # 1555: Pillow reads the set alpha bit as transparent, the format says opaque
+                im = Image.merge("RGBA", (r, g, b, a.point(lambda v: 255 - v)))
+            out = _to_8bit_rgb(im, 8)
+    except _Refused as exc:
+        raise ValueError(str(exc)) from None
+    except ValueError as exc:  # Pillow's own refusals, e.g. a 32-bit TGA colour map
+        raise ValueError(f"unsupported {label} variant ({exc})") from exc
+    except (UnidentifiedImageError, SyntaxError, struct.error, EOFError) as exc:
+        raise ValueError(f"not a valid {label}: {exc}") from exc
+    except OSError as exc:
+        if is_lock_error(exc):  # a lock is a lock: the caller retries it
+            raise
+        raise ValueError(f"cannot decode this {label} ({exc})") from exc
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    out.save(dest, format="PNG")
+    return dest
+
+
 def suffix_of(png: str | Path) -> str:
     """The texture-type suffix of a file name ("_nohq" for rock_nohq.png), "" when there is none."""
     stem = Path(png).stem
@@ -553,7 +643,7 @@ def route(png: str | Path, converter: str, tool_found: bool) -> str:
     Loki's encoder takes what the Rust lib says it supports (`_paa.supported`), at any size it can load
     (a PNG over 4096 is halved to 4096 by the encoder, as ImageToPAA does); everything else goes to
     ImageToPAA when it is there."""
-    if converter == LOKI and _paa.supported(Path(png).name):
+    if converter == LOKI and _paa.supported(png_name(png)):
         return LOKI
     return BOHEMIA if tool_found else NEEDS_TOOL
 
@@ -613,17 +703,26 @@ def convert(
         used = route(png, converter, tool is not None)
         if used == NEEDS_TOOL:
             return ConvertResult(png, paa, False, needs_tool_reason(png, converter))
+        twin = other_source(png)
+        if twin is not None:
+            return ConvertResult(png, paa, False, f"same PAA as {twin.name}: remove one of them")
         with tempfile.TemporaryDirectory(prefix="loki-") as tdir:
             tmp_paa = out_dir / paa.name
+            src_png = png
+            if png.suffix.lower() != ".png":  # one decoder for TGA and JPG: both routes then see a PNG of the same pixels
+                try:
+                    src_png = decode_to_png(png, Path(tdir) / "decoded" / png_name(png))
+                except ValueError as exc:
+                    return ConvertResult(png, paa, False, f"cannot read: {exc}")
             if used == LOKI:
                 try:
-                    err = _run_loki(png, tmp_paa, max_size, size)
+                    err = _run_loki(src_png, tmp_paa, max_size, size)
                 except _paa.NeedsImageToPAA as refusal:  # the encoder decides per file; Python never predicts it
                     if tool is None:
                         return ConvertResult(png, paa, False, f"needs Arma 3 Tools ({refusal})", needs_tool=True)
                     used = BOHEMIA
             if used == BOHEMIA:
-                src = _imagetopaa_input(png, Path(tdir), max_size, size)
+                src = _imagetopaa_input(src_png, Path(tdir), max_size, size)
                 err = _run_tool(tool, src, tmp_paa)
             if err is None:
                 try:
@@ -633,7 +732,7 @@ def convert(
                         return ConvertResult(png, paa, False, PAA_IN_USE, retry=True)
                     raise
                 if size is not None:
-                    outputs.remember(paa, size.key(png.name))
+                    outputs.remember(paa, size.key(png_name(png)))
                 else:
                     outputs.forget(paa)
         if err is not None:

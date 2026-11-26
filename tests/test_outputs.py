@@ -97,7 +97,8 @@ def test_a_corrupt_store_is_empty_and_rewritten(tmp_path, capsys, junk):
     assert json.loads(outputs.store_path().read_text())["version"] == outputs.VERSION
 
 
-def test_an_unreadable_store_is_empty(tmp_path, capsys):
+def test_an_unreadable_store_is_empty(tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(outputs, "_WRITE_WAIT", 0.2)
     p = png(tmp_path / "a_co.png")
     outputs.store_path().mkdir()  # a folder where the file should be: every read fails
     assert outputs.recorded(tmp_path / "a_co.paa") is None
@@ -136,15 +137,15 @@ def test_parallel_conversions_with_jobs_record_every_file(tmp_path, capsys):
     assert len(json.loads(outputs.store_path().read_text())["entries"]) == 8
 
 
-def hold_open(path: Path):
-    """Open `path` on Windows with read/write sharing but no delete sharing; returns a close function."""
+def hold_open(path: Path, share: int = 0x1 | 0x2):
+    """Open `path` on Windows with `share` (default read+write, no delete sharing); returns a close function."""
     import ctypes
     from ctypes import wintypes
 
     create = ctypes.windll.kernel32.CreateFileW
     create.restype = wintypes.HANDLE
     create.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
-    handle = create(str(path), 0x80000000, 0x1 | 0x2, None, 3, 0x80, None)  # GENERIC_READ, share read+write, OPEN_EXISTING
+    handle = create(str(path), 0x80000000, share, None, 3, 0x80, None)  # GENERIC_READ, OPEN_EXISTING
     assert handle not in (None, wintypes.HANDLE(-1).value)
     return lambda: ctypes.windll.kernel32.CloseHandle(handle)
 

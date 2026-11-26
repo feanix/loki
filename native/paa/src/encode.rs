@@ -343,7 +343,7 @@ pub fn encode(mut img: Image, rule: &Rule) -> Result<Vec<u8>, Error> {
         )));
     }
     img.check()?;
-    // The only unreplicable rules use a noise mip filter, whose noise is not reproduced here.
+    // A rule this encoder cannot take (none today, see `Rule::unreplicable`) is for ImageToPAA.
     if let Some(why) = rule.unreplicable() {
         return Err(Error::Unsupported {
             reason: "noise mip filter",

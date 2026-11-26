@@ -21,8 +21,8 @@
 //!
 //! The texture format is chosen from the input file name suffix (`_co`, `_ca`, `_nohq`, ...) by
 //! the rule table, which `paa-proto rules` prints. Suffixes with noise mip filters (`_cat`,
-//! `_can`, `_non`) are refused by the library's encode step, because this encoder does not
-//! reproduce the noise those filters add.
+//! `_can`, `_non`) are encoded with Loki's own seeded noise (`noise.rs`), matched on measured
+//! noise strength, grain and alpha coverage to ImageToPAA's, not byte for byte.
 //!
 //! Results go to stdout; errors go to stderr as `error: <message>`.
 //!

@@ -12,8 +12,10 @@
 //!   truncate, B and A round. Each level, mip 0 included, is stored renormalised: vectors
 //!   `c/255*2-1` scaled to unit length and re-encoded with rounding. The renormalised level is
 //!   not fed back into the chain. `NormalizeNormalMapNoise` is handled like `NormalizeNormalMap`
-//!   here, but `encode` refuses rules that use it (`Rule::unreplicable`), so its noise is never
-//!   produced.
+//!   here for the colour (its measured noise is below one level); its alpha is rewritten like `_cat`'s (`noise`).
+//! * `AlphaNoise` (`_cat`) and `AddAlphaNoise` (`_can`): the chain is the plain box; each stored level, mip 0
+//!   included, gets its alpha rewritten by seeded noise (`noise`), matched to ImageToPAA on measured strength,
+//!   grain and (`_cat`) coverage, not byte for byte.
 //! * `NormalizeNormalMapFade` and `FadeOut` move the level toward flat by an amount that depends
 //!   on the mip's longer side (see `fade_amount`). Observed on 512x128, 128x512 and 1024x128
 //!   DXT: a 64x16 mip fades like 64x64. The averaged vector moves toward (0, 0, 1) and is then
@@ -27,6 +29,7 @@
 //! output is the same on every machine except for a possible last-bit difference in `powf`.
 
 use crate::img::{halve_with, Image};
+use crate::noise;
 use crate::rules::Filter;
 use std::sync::OnceLock;
 
@@ -165,16 +168,23 @@ fn halve_chain(img: &Image) -> Image {
 /// average for the plain (non-normal-map) case.
 pub(crate) fn next_mip(img: &Image, filter: Option<Filter>, linear: bool) -> Image {
     match filter {
-        Some(Filter::NormalizeNormalMapAlpha) => halve_weighted(img, false),
+        Some(Filter::NormalizeNormalMapAlpha | Filter::NormalizeNormalMapNoise) => {
+            halve_weighted(img, false)
+        }
         _ if is_normal_filter(filter) => halve_chain(img),
         _ if linear => halve_weighted(img, true),
         _ => halve_chain(img),
     }
 }
 
-/// True when `filter` changes the stored level (normal maps are renormalised, `FadeOut` fades).
+/// True when `filter` changes the stored level (normal maps are renormalised, `FadeOut` fades, the alpha
+/// noise filters write their noise: see `noise`).
 pub(crate) fn shapes_output(filter: Option<Filter>) -> bool {
-    is_normal_filter(filter) || filter == Some(Filter::FadeOut)
+    is_normal_filter(filter)
+        || matches!(
+            filter,
+            Some(Filter::FadeOut | Filter::AlphaNoise | Filter::AddAlphaNoise)
+        )
 }
 
 /// Renormalise every texel's xyz as a tangent-space vector to unit length (alpha is left alone; a zero
@@ -211,6 +221,15 @@ pub(crate) fn output(rgba: &mut [u8], filter: Option<Filter>, w: usize, h: usize
                 p[c] = encode_unit(n[c]);
             }
         }
+        // `_non`: the normals above, and the alpha channel is rewritten by the `_cat` noise.
+        if filter == Some(Filter::NormalizeNormalMapNoise) {
+            rgba.chunks_exact_mut(4).for_each(|p| p[3] = 0);
+            noise::alpha_noise(rgba, w, h);
+        }
+    } else if filter == Some(Filter::AlphaNoise) {
+        noise::alpha_noise(rgba, w, h);
+    } else if filter == Some(Filter::AddAlphaNoise) {
+        noise::add_alpha_noise(rgba, w, h);
     } else if filter == Some(Filter::FadeOut) {
         // FadeOut: lerp every byte toward 128 by t; t = 0 leaves every byte as it was.
         for v in rgba.iter_mut() {

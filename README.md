@@ -8,7 +8,7 @@ Created by Astrid Winters.
 
 - **Any workflow, no plugins.** Save PNG, TGA or JPG the way you always do. No Photoshop, GIMP or Substance plugins, no export presets.
 - **Fast.** A built-in converter written in Rust: a 2048x2048 `_co` takes 0.4 s, against 6 s with Bohemia's ImageToPAA. Files convert in parallel.
-- **No Arma 3 Tools needed** for nearly every texture type.
+- **No Arma 3 Tools needed** for any texture type.
 - **Clear status.** Every file shows Up to date, Needs converting, or why it was skipped.
 - **Command line** for scripts and build steps: `Loki-cli.exe`.
 
@@ -42,7 +42,7 @@ In PowerShell, run it as `.\Loki-cli.exe`. Exit codes: 0 all converted, 1 a file
 
 ## Known limits
 
-- `_cat`, `_can` and `_non` (noise textures) still go to Bohemia's ImageToPAA, so they need Arma 3 Tools (free on Steam). Loki finds it on its own.
+- `_cat`, `_can` and `_non` (noise textures) use Loki's own noise. ImageToPAA's could not be reverse engineered; Loki's is a close approximation, matched in strength, grain and coverage, but not byte for byte. Details: [docs/CONVERTER.md](docs/CONVERTER.md).
 - Soft transparency and DXT1 cut-out masks are close matches to ImageToPAA's output rather than byte for byte; they look the same in game. Details: [docs/CONVERTER.md](docs/CONVERTER.md).
 - PNGs over 16384 on a side, or over 8192x8192 pixels in all, are too big to load. Anything over 4096 is scaled to 4096 automatically.
 - A very noisy 4096x4096 DXT5 texture may not fit the PAA format: set max size to 2048.

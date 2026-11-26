@@ -96,8 +96,8 @@ TexConvert.cfg drives it ("configuration file for TexView/ImageToPAA ... paramet
 |---|---|---|---|
 | `_co` | DXT1, dynRange 1 | | DXT1 [obs: rgb256_co] |
 | `_ca` | DXT5, dynRange 1 | | DXT5 + FLAG=1 on RGBA [obs: rgba256_ca] |
-| `_cat` | DXT5 | AlphaNoise | untested |
-| `_can` | DXT5 | AddAlphaNoise | untested |
+| `_cat` | DXT5 | AlphaNoise: alpha of every mip, mip 0 included, rewritten by noise | DXT5, tags as `_ca` [obs, see Noise filters] |
+| `_can` | DXT5 | AddAlphaNoise: alpha 0 stays 0, else 64 + alpha/2 + noise | DXT5, tags as `_ca` [obs] |
 | `_raw`, `_1555` | ARGB1555 | | untested |
 | `_4444` | ARGB4444 | | untested |
 | `_sky` | DXT5 | R,1-A,B,1-G | untested |
@@ -117,7 +117,8 @@ TexConvert.cfg drives it ("configuration file for TexView/ImageToPAA ... paramet
 | `_nohq` | DXT5 | cfg 1-A,G,B,1-R; NormalizeNormalMapAlpha | DXT5, SWIZ `05 04 02 03`, no FLAG [obs: normal256_nohq] |
 | `_novhq` | DXT5 | 1,G,1,1-R | untested |
 | `_nofhq`,`_nshq` | DXT5 | as nohq | untested |
-| `_non`,`_nopx` | DXT5 | | untested |
+| `_non` | DXT5 | NormalizeNormalMapNoise: normals as `_nohq` (alpha weighted); alpha is pure noise | DXT5, no SWIZ [obs] |
+| `_nopx` | DXT5 | | untested |
 | `_normalmap`,`_nof`,`_ns` | unset | normal filters | untested |
 | `_noex`,`_nofex`,`_nsex` | ARGB4444 | uncompressed | untested |
 | `_gs` | AI88 | | untested |
@@ -126,6 +127,21 @@ TexConvert.cfg drives it ("configuration file for TexView/ImageToPAA ... paramet
 - The 2007 forum copy and the Go copy differ in places (swizzle order of `_nohq`, `_as`, `_smdi`), so the swizzle column is low confidence. Only _co, _ca, _nohq, no-suffix observed. SWIZ payload per suffix unknown beyond `_nohq` = `05 04 02 03` [obs]. _nohq AVGC equals the average of the input RGB, alpha 255 [obs], so AVGC is computed on source data (or ambiguity if swizzle only touches alpha).
 - **No suffix**: auto. RGB -> DXT1; RGBA -> DXT5 + FLAG=1 [obs: rgb256.paa, rgba256.paa; armake auto: "DXT5 if the image has alpha, otherwise DXT1"]. Whether "has alpha" means a PNG alpha channel or any pixel alpha < 255: untested.
 - No-suffix vs suffixed differ only in mip bytes and AVGC alpha by 1 (rgb256 vs rgb256_co mip0 22118 vs 22152; rgba AVGC alpha 202 vs 203); tags identical [obs]. Likely `dynRange` (1 for _co/_ca) [cfg, hypothesis, unconfirmed].
+
+### Noise filters (`_cat`, `_can`, `_non`)
+
+Bohemia's exact noise algorithm for these three suffixes could not be reverse engineered: its generator, its seed and its mapping cannot be recovered from the output. Loki uses its own close approximation (`native/paa/src/noise.rs`), matched on measured noise strength, grain and, for `_cat` and the alpha of `_non`, alpha coverage per mip. The bytes therefore differ from ImageToPAA's; the texture behaves the same in game. What ImageToPAA's output shows [obs, decoded values, noise = output minus the plain filter through the same codec]:
+
+- Every mip, mip 0 included, is rewritten from the plain box mean `b` of the source alpha at that level (the chain is not fed back). The noise field depends on the level size only: the same level size of two inputs, or of two runs, has the same field.
+- `_can`: alpha 0 stays exactly 0; any other texel is `64 + b/2 + noise`. The noise is bell shaped (excess kurtosis about -0.4), standard deviation 16.1, the same on every mip (it is not averaged down), white (per texel) below 512 texels and band limited above (see Grain and spectrum). The 4x4 level has no noise.
+- `_cat`: the alpha of each mip is rank-equalised. Whatever the source (flat 0, flat 255, a fence that is 78 percent solid, a 25 percent soft disc), the output is spread evenly over 0..255 and 50 to 54 percent of the texels have alpha at or above 128 on every mip of 16x16 and up. Texels keep their source order, blurred by noise of standard deviation about 32 on the 0..255 scale: a hard cut-out keeps its shape (source 0 gives the lower half, source 255 the upper half), a gradient keeps its slope. Flat alpha gives uniform 0..255 (mean 129.7, standard deviation 73.5); a flat 4x4 level is all 255.
+- `_non`: the colour is a normal map filtered like `_nohq` (colour weighted by the source alpha, each level renormalised); the alpha is `_cat`'s noise on a flat input: uniform 0..255 and uncorrelated with the source alpha (correlation 0.00 on a cut-out, a gradient and a foliage mask).
+- Grain and spectrum: the noise of a level depends on its size. Below 512 texels it is white (per texel). From 512 up it is band limited, with a radial power spectrum that moves down in frequency with the size: on the 1024 level almost no power above 0.5 cycles per texel (0.03) and almost none below 1/32 (0.002), on 2048 almost none above 0.25 (0.05) and 0.03 below 1/32 (lag 1 / lag 2 correlation 0.3 / -0.1 at 1024, 0.76 / 0.31 at 2048, 0.94 / 0.78 at 4096). Share of the noise power per radial band (0-1/64, 1/64-1/32, 1/32-1/16, 1/16-1/8, 1/8-1/4, 1/4-1/2, 1/2-0.71 cycles per texel), `_cat` flat input: 1024 level 0.000 / 0.000 / 0.002 / 0.028 / 0.274 / 0.663 / 0.033; 2048 level 0.000 / 0.002 / 0.028 / 0.275 / 0.641 / 0.051 / 0.003; 512 level 0.000 / 0.001 / 0.003 / 0.012 / 0.083 / 0.612 / 0.289. The spectrum is isotropic and the same for `_cat`, `_non` and (within 0.02) `_can`. `research/paa-noise/SPECTRUM41.md`.
+- AVGC, MAXC, FLAG and SWIZ are those of the plain class (`_ca`; `_non` has no swizzle): AVGC comes from the source colour and the plain mean source alpha, not from the noise.
+
+Measured agreement of Loki's approximation (157 generated cases, 256 to 4096 on a side, square and 512x128 / 128x512; `research/paa-noise/measure_ext.py`): noise standard deviation within 15 percent of ImageToPAA's on every mip of 16x16 and up (13.5 percent at worst, `_can`), grain within one texel and `_cat` coverage within 3 percentage points on every mip of 64x64 and up (1.9 points at worst). On levels of 32x32 and below ImageToPAA's own `_cat` coverage varies by up to 5 points with the input (0.48 to 0.57) and Loki follows it less closely; the 8x8 and 4x4 levels of ImageToPAA are not modelled.
+
+Spectrum (`research/paa-noise/spectrum41.py`): Loki builds the noise of levels of 512 to 4095 texels in the Fourier domain from ImageToPAA's measured radial profile per level size (`native/paa/src/noise_profile.rs`, fitted by `research/paa-noise/fit_profile41.py`), so the share of noise power in each of the seven bands above is within 0.05 of ImageToPAA's (0.017 at worst; 0.006 on the 1024 and 2048 levels) for `_cat`, `_can` and `_non`, on 1024 and 2048 pictures, mips 0 to 2. Levels of 4096 and up keep the older smoothed white noise (lag correlations above); their spectrum was not measured.
 
 ## 8. Validation
 
@@ -138,7 +154,7 @@ TexConvert.cfg drives it ("configuration file for TexView/ImageToPAA ... paramet
 3. Game acceptance never tested: no TexView 2 / game load of our output. Required tags, FLAG necessity, tail bytes validated only by mimicry.
 4. Mip filter and dynRange unknown; normal maps (`_nohq`, `_no`, `_ns`) need exact swizzle and renormalization or lighting is wrong. High risk.
 5. SWIZ semantics: one sample. Other swizzled suffixes may emit other SWIZ or none; dump ImageToPAA output per suffix before supporting.
-6. FLAG=2, `_cat` alpha-test, 1-bit alpha untested.
+6. FLAG=2 and 1-bit alpha untested.
 7. Non-pow2 / non-multiple-of-4 input undefined; reject (armake does).
 8. u24 overflow for 4096 DXT5 uncompressed.
 9. Colour space (sRGB vs linear) in AVGC and DXT endpoints unknown; MAXC with dark images untested.

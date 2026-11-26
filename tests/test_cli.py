@@ -80,6 +80,7 @@ def test_line_format_and_converter_named(tmp_path, capsys):
     assert core.paa_size(tmp_path / "wall_co.paa") == (256, 256)
 
 
+@pytest.mark.usefixtures("cat_is_handed_over")
 def test_flagged_needs_tool_and_error_lines_exit_1(tmp_path, capsys):
     odd = png(tmp_path / "odd_co.png", (300, 200))
     cat = png(tmp_path / "rock_cat.png")
@@ -133,6 +134,7 @@ def test_bad_imagetopaa_path_is_a_usage_error(tmp_path, capsys):
     assert not (tmp_path / "a_co.paa").exists()
 
 
+@pytest.mark.usefixtures("cat_is_handed_over")
 def test_imagetopaa_option_path_is_used_for_a_handover_file(tmp_path, capsys, monkeypatch):
     p = png(tmp_path / "rock_cat.png")
     fake = tmp_path / "ImageToPAA.exe"
@@ -148,22 +150,24 @@ def test_imagetopaa_option_path_is_used_for_a_handover_file(tmp_path, capsys, mo
     assert code == 0 and called == [fake] and "bohemia" in out.splitlines()[0]
 
 
-def test_help_handover_suffixes_are_ones_the_encoder_rejects(capsys):
+def test_help_names_no_handover_suffix_because_the_encoder_rejects_none(capsys):
     from loki import _paa
 
     _code, out, _ = run(capsys, "convert", "--help")
     text = " ".join(out.split())
     assert "ImageToPAA" in text
     named = re.findall(r"(?<![\w])(_[a-z]+)\b", cli.HANDOVER_CASES)
-    assert {"_cat", "_can", "_non"} <= set(named)  # `_sky` is encoded by Loki
-    for s in named:
-        assert not _paa.supported(f"x{s}.png"), s
+    assert named == []  # the encoder takes every suffix: `_cat`, `_can`, `_non` and `_sky` included
+    for s in ("_cat", "_can", "_non", "_sky"):
+        assert _paa.supported(f"x{s}.png"), s
+    assert "writes every texture type itself" in text
     assert "unknown suffix" not in text  # unknown suffixes are encoded by Loki
     intro = text.split("positional arguments")[0]  # the hand-over sentence; the --size help names 4096 as a limit
     assert "4096" not in cli.HANDOVER_CASES and "4096" not in intro  # a PNG over 4096 is halved by Loki
     assert _paa.supported("x_zzz.png")
 
 
+@pytest.mark.usefixtures("cat_is_handed_over")
 def test_handover_to_imagetopaa_when_the_tool_is_present(tmp_path, capsys, monkeypatch):
     p = png(tmp_path / "rock_cat.png")
     fake = tmp_path / "ImageToPAA.exe"
@@ -181,6 +185,7 @@ def test_handover_to_imagetopaa_when_the_tool_is_present(tmp_path, capsys, monke
     assert (tmp_path / "rock_cat.paa").read_bytes() == b"paa from the tool"
 
 
+@pytest.mark.usefixtures("cat_is_handed_over")
 def test_handover_without_the_tool_says_needs_arma_3_tools(tmp_path, capsys):
     p = png(tmp_path / "rock_cat.png")
     code, out, err = run(capsys, "convert", str(p))
@@ -237,6 +242,7 @@ def test_windowed_exe_dev_options_are_not_routed_to_the_pointer(capsys):
 
 # --- convert is the default action, the word `convert` still accepted ---
 
+@pytest.mark.usefixtures("cat_is_handed_over")
 def test_short_and_convert_forms_give_identical_results(tmp_path, capsys):
     for name, size in (("wall_co.png", (128, 128)), ("odd_co.png", (30, 20)), ("rock_cat.png", (64, 64))):
         src = png(tmp_path / "a" / name, size)  # noise differs per call, so copy the same bytes to b

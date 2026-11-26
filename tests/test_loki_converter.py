@@ -57,8 +57,9 @@ def by_name(app):
         ("a_co.png", core.LOKI, False, core.LOKI),
         ("a_ca.png", core.LOKI, False, core.LOKI),
         ("a.png", core.LOKI, False, core.LOKI),
-        ("a_cat.png", core.LOKI, True, core.BOHEMIA),
-        ("a_cat.png", core.LOKI, False, core.NEEDS_TOOL),
+        ("a_cat.png", core.LOKI, False, core.LOKI),  # the noise suffixes are Loki's own (seeded noise)
+        ("a_can.png", core.LOKI, False, core.LOKI),
+        ("a_non.png", core.LOKI, False, core.LOKI),
         ("a_sky.png", core.LOKI, False, core.LOKI),  # `_sky` passes the relative checks, Loki encodes it
         ("a_co.png", core.BOHEMIA, True, core.BOHEMIA),
         ("a_co.png", core.BOHEMIA, False, core.NEEDS_TOOL),
@@ -69,6 +70,13 @@ def test_route(name, converter, tool, want):
     assert core.route(name, converter, tool) == want
 
 
+@pytest.mark.usefixtures("cat_is_handed_over")
+@pytest.mark.parametrize(("tool", "want"), [(True, core.BOHEMIA), (False, core.NEEDS_TOOL)])
+def test_a_file_the_encoder_cannot_take_goes_to_the_tool_or_needs_it(tool, want):
+    assert core.route("a_cat.png", core.LOKI, tool) == want
+
+
+@pytest.mark.usefixtures("cat_is_handed_over")
 def test_needs_tool_texts():
     assert core.needs_tool_reason("x_cat.png") == "needs Arma 3 Tools for _cat"
     assert core.needs_tool_reason("x_co.png", core.BOHEMIA) == "ImageToPAA.exe not found"
@@ -91,6 +99,7 @@ def test_loki_max_size_halves_like_target_size(tmp_path):
     assert core.paa_size(png.with_suffix(".paa")) == core.target_size(256, 128, 64) == (64, 32)
 
 
+@pytest.mark.usefixtures("cat_is_handed_over")
 def test_loki_route_refuses_unsupported_suffix_without_tool_and_writes_nothing(tmp_path):
     png = make_png(tmp_path / "a_cat.png")
     res = core.convert(png, None, None, core.LOKI)
@@ -98,6 +107,7 @@ def test_loki_route_refuses_unsupported_suffix_without_tool_and_writes_nothing(t
     assert not png.with_suffix(".paa").exists()
 
 
+@pytest.mark.usefixtures("cat_is_handed_over")
 def test_loki_sends_other_suffixes_to_the_tool_but_encodes_a_huge_png_itself(tmp_path, monkeypatch):
     monkeypatch.setattr(core, "_run_tool", fake_tool_run)
     cat = make_png(tmp_path / "a_cat.png")
@@ -173,20 +183,20 @@ def test_convert_all_runs_the_encoder_in_the_pool_without_the_tool(tmp_path):
         app.close()
 
 
+@pytest.mark.usefixtures("cat_is_handed_over")
 def test_mixed_suffixes_tool_absent_and_present(tmp_path, monkeypatch):
     monkeypatch.setattr(core, "_run_tool", fake_tool_run)
-    files = {n: make_png(tmp_path / n) for n in ("a_co.png", "b_ca.png", "c.png", "d_cat.png", "e_can.png")}
+    files = {n: make_png(tmp_path / n) for n in ("a_co.png", "b_ca.png", "c.png", "d_cat.png")}
     app = make_app(tmp_path, tool_gone)
     try:
         app.add_files(list(files.values()))
         rows = by_name(app)
         assert rows["d_cat.png"].status == core.NEEDS_TOOL
         assert rows["d_cat.png"].status_text == "needs Arma 3 Tools for _cat"
-        assert rows["e_can.png"].status_text == "needs Arma 3 Tools for _can"
         assert rows["a_co.png"].status == core.NEEDS_CONVERTING
         assert app.tool_warning  # a row needs it now
         run_all(app)
-        assert app.summary() == "Converted 3 file(s), 2 need Arma 3 Tools"
+        assert app.summary() == "Converted 3 file(s), 1 need Arma 3 Tools"
         rows = by_name(app)
         assert [rows[n].status for n in ("a_co.png", "b_ca.png", "c.png")] == [core.UP_TO_DATE] * 3
         assert rows["d_cat.png"].status == core.NEEDS_TOOL
@@ -260,6 +270,7 @@ def test_switching_converter_persists_and_never_changes_status(tmp_path):
 # --- the window --------------------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("cat_is_handed_over")
 def test_dropdown_selects_the_converter_and_banner_follows_need(tk_root, tmp_path):
     png = make_png(tmp_path / "x_cat.png")
     app = make_app(tmp_path, tool_gone)

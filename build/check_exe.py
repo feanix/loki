@@ -6,9 +6,9 @@ Runs the demo scenario (+ about) with --out, then --screenshot --drop: the exe p
 to its own window and this script asserts the dropped files appear as rows in the digest it prints.
 Also writes the screenshot-with-mixed-caps fixture (shot.scn) and takes a second screenshot of it.
 Then converts a _co, a _sky and a _cat PNG with ImageToPAA hidden (settings point at a path that does not exist, and
-the minimal PATH holds no Arma 3 Tools): the exe's built-in Loki converter must write the _co and _sky .paa
-(made_by=loki; _sky is Loki's since 0.3.1) and the _cat row (a noise suffix, still ImageToPAA-only) must
-say it needs Arma 3 Tools. No Rust or Python is on that PATH either.
+the minimal PATH holds no Arma 3 Tools): the exe's built-in Loki converter must write all three .paa
+(made_by=loki; _sky is Loki's since 0.3.1, the noise suffixes such as _cat since 0.3.3), so no texture type
+needs Arma 3 Tools any more. No Rust or Python is on that PATH either.
 Then checks dist/Loki-cli.exe (see check_cli): PE subsystems, --help/--version, one conversion per input kind,
 exit codes 0/1/2, output through cmd.exe and powershell.exe piped and redirected to a file, and that
 `Loki.exe convert` opens no window and prints the pointer with exit 2.
@@ -198,7 +198,7 @@ def main() -> int:
     # Built-in converter with ImageToPAA hidden: the settings path is forced to a file that does not exist.
     loki_dir = work / "loki_conv"
     loki_dir.mkdir(exist_ok=True)
-    for name in ("brick_co.paa", "brick_co.png", "wall_sky.paa", "wall_sky.png", "wall_cat.png"):
+    for name in ("brick_co.paa", "brick_co.png", "wall_sky.paa", "wall_sky.png", "wall_cat.paa", "wall_cat.png"):
         (loki_dir / name).unlink(missing_ok=True)
     Image.effect_noise((256, 256), 60).convert("RGB").save(loki_dir / "brick_co.png")
     Image.effect_noise((256, 256), 60).convert("RGB").save(loki_dir / "wall_sky.png")
@@ -212,10 +212,10 @@ def main() -> int:
                          "--out", str(work / "loki.log")], cwd=work, env=env, timeout=180, check=False)  # fmt: skip
     ltext = (work / "loki.log").read_text(encoding="utf-8") if (work / "loki.log").exists() else ""
     loki_ok = (r5.returncode == 0 and (loki_dir / "brick_co.paa").is_file() and (loki_dir / "wall_sky.paa").is_file()
-               and not (loki_dir / "wall_cat.paa").exists() and "tool_found: no" in ltext
-               and ltext.count("up_to_date | 256x256 | made_by=loki") == 2
-               and "needs_tool: needs Arma 3 Tools for _cat" in ltext)  # fmt: skip
-    print("Loki converter with ImageToPAA hidden (_co and _sky converted by Loki, _cat needs the tool):", loki_ok)
+               and (loki_dir / "wall_cat.paa").is_file() and "tool_found: no" in ltext
+               and ltext.count("up_to_date | 256x256 | made_by=loki") == 3
+               and "needs_tool" not in ltext)  # fmt: skip
+    print("Loki converter with ImageToPAA hidden (_co, _sky and _cat converted by Loki, nothing needs the tool):", loki_ok)
 
     cli_ok = check_cli(work, env, exe_dir)
     print("Loki-cli.exe and Loki.exe convert pointer:", cli_ok)

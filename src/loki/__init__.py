@@ -3,4 +3,4 @@
 Module map and contracts: docs/design.md.
 """
 
-__version__ = "0.3.3"
+__version__ = "0.3.4"

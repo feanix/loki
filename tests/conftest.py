@@ -29,6 +29,19 @@ def pytest_sessionstart(session):
         pytest.exit(f"native build failed, no tests run:\n{exc}", returncode=2)
 
 
+@pytest.fixture
+def cat_is_handed_over(monkeypatch):
+    """Loki's encoder takes every suffix now, `_cat` included. The hand-over to ImageToPAA (routing, row text, exit
+    code, the tool call and the sized copy it gets) is still there for a file the encoder cannot take, so the tests
+    of that plumbing use `_cat` as the stand-in: `_paa.supported` says no to a `_cat` name, as it used to."""
+    from loki import _paa
+
+    real = _paa.supported
+    monkeypatch.setattr(
+        _paa, "supported", lambda name: False if Path(str(name)).stem.lower().endswith("_cat") else real(name)
+    )
+
+
 def tk_unavailable(exc: BaseException) -> None:
     """Call when Tk init raised: skip only if LOKI_ALLOW_TK_SKIP=1, else fail with the Tcl text."""
     if os.environ.get("LOKI_ALLOW_TK_SKIP") == "1":
@@ -55,6 +68,15 @@ def track_app(app):
     """Register an App so tk_root teardown stops its watcher (else the join below waits out its timeout)."""
     _open_apps.append(app)
     return app
+
+
+def read_when_free(path: Path) -> bytes | None:
+    """Bytes of `path`, or None while it is missing or held for a moment. The watcher os.replace's the PAA, and
+    on Windows an open that lands in that instant raises PermissionError; a poll should just try again."""
+    try:
+        return path.read_bytes()
+    except (PermissionError, FileNotFoundError):
+        return None
 
 
 @pytest.fixture(autouse=True)

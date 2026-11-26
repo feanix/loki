@@ -6,19 +6,19 @@
     Loki-cli.exe textures\*_co.png --max-size 1024
     Loki-cli.exe textures --recursive --skip-up-to-date --jobs 4
     Loki-cli.exe textures\door_co.png --size 512x256 --fit pad
-    Loki-cli.exe rock_cat.png --imagetopaa "D:\Games\Arma 3 Tools\ImageToPAA\ImageToPAA.exe"
+    Loki-cli.exe textures\wall_co.png --imagetopaa "D:\Games\Arma 3 Tools\ImageToPAA\ImageToPAA.exe"
     Loki-cli.exe --help
     Loki-cli.exe --version
 
 Converting is the default action. The 0.3.0 form `Loki-cli.exe convert <inputs...>` still works; only the bare first word `convert` means the command, so to convert a file or folder literally named `convert`, write `.\convert` (or any other path form).
 
-Inputs are PNG, TGA and JPG files (`.png`, `.tga`, `.jpg`, `.jpeg`, any case), glob patterns (Loki expands them itself, since cmd and PowerShell do not) and folders (their `*.png`, `*.tga`, `*.jpg` and `*.jpeg`; add `--recursive` for subfolders). Each PAA is written beside its source with the same stem (`wall_co.tga` gives `wall_co.paa`), and the stem decides the texture type exactly as for a PNG. The result for a TGA or JPG equals the result for a PNG of the same pixels. If two sources would write the same PAA (`wall_co.png` and `wall_co.tga` in one folder), both are flagged with a message naming the other file and neither is converted until one is removed. JPG is lossy: use PNG or TGA for normal maps and masks. Loki refuses CMYK JPGs and TGA variants it cannot decode, with a message saying why. Routing is the same as the window: the Loki converter, ImageToPAA for the files listed in [CONVERTER.md](CONVERTER.md), "needs Arma 3 Tools" when it is absent, non-power-of-two PNGs flagged and not converted (unless `--size` is given, see [Output size](#output-size)). Every given file is converted unless you pass `--skip-up-to-date`.
+Inputs are PNG, TGA and JPG files (`.png`, `.tga`, `.jpg`, `.jpeg`, any case), glob patterns (Loki expands them itself, since cmd and PowerShell do not) and folders (their `*.png`, `*.tga`, `*.jpg` and `*.jpeg`; add `--recursive` for subfolders). Each PAA is written beside its source with the same stem (`wall_co.tga` gives `wall_co.paa`), and the stem decides the texture type exactly as for a PNG. The result for a TGA or JPG equals the result for a PNG of the same pixels. If two sources would write the same PAA (`wall_co.png` and `wall_co.tga` in one folder), both are flagged with a message naming the other file and neither is converted until one is removed. JPG is lossy: use PNG or TGA for normal maps and masks. Loki refuses CMYK JPGs and TGA variants it cannot decode, with a message saying why. Routing is the same as the window: the Loki converter writes every texture type (the noise suffixes `_cat`, `_can` and `_non` included, see [CONVERTER.md](CONVERTER.md); no suffix goes to ImageToPAA now), "needs Arma 3 Tools" for a file that only ImageToPAA could write when it is absent, non-power-of-two PNGs flagged and not converted (unless `--size` is given, see [Output size](#output-size)). Every given file is converted unless you pass `--skip-up-to-date`.
 
 ## Options
 
 `--max-size off|2048|1024|512|256` (default off), `--size WxH` with `--fit`, `--pad-colour` and `--pad-align` (see [Output size](#output-size)), `--imagetopaa PATH` (see below), `--jobs N` (parallel conversions), `--skip-up-to-date`, `--recursive`, `--wait-locked SECONDS` (default 30: how long to wait for a PNG or PAA another program holds open, then `error ...: PAA in use`), `--quiet` (only problems and the summary).
 
-The built-in converter does most files. These go to Bohemia's ImageToPAA automatically: `_cat`, `_can`, `_non`. `--imagetopaa PATH` is only needed if Arma 3 Tools is installed somewhere Loki cannot find; normally Loki finds it through Steam. A bad path is a usage error (exit 2). If a file needs ImageToPAA and it is not found, that file is reported as "needs Arma 3 Tools" and the exit code is 1.
+The built-in converter writes every texture type itself; no suffix goes to Bohemia's ImageToPAA automatically now. `--imagetopaa PATH` is only needed if a file ever needs ImageToPAA and Arma 3 Tools is installed somewhere Loki cannot find; normally Loki finds it through Steam. A bad path is a usage error (exit 2). If a file needs ImageToPAA and it is not found, that file is reported as "needs Arma 3 Tools" and the exit code is 1.
 
 ## Output size
 
@@ -39,13 +39,11 @@ One line per file, then a summary. Files are converted in parallel, so lines can
     flagged    odd_co.png: 300x200: sides must be powers of two (e.g. 256x256) or set an output size
     error      x.png: file not found
     converted  wall_co.png -> wall_co.paa (256x256, loki, 0.02 s)
-    converted  rock_nohq.png -> rock_nohq.paa (256x256, loki, 0.03 s)
-    converted  rock_cat.png -> rock_cat.paa (256x256, bohemia, 0.55 s)
-    done: 3 converted, 0 skipped, 1 flagged, 0 need Arma 3 Tools, 1 errors (0.6 s)
+    converted  rock_cat.png -> rock_cat.paa (256x256, loki, 0.02 s)
+    converted  rock_nohq.png -> rock_nohq.paa (256x256, loki, 0.02 s)
+    done: 3 converted, 0 skipped, 1 flagged, 0 need Arma 3 Tools, 1 errors (0.0 s)
 
-On a machine without Arma 3 Tools the `_cat` file prints instead:
-
-    needs-tool rock_cat.png: needs Arma 3 Tools for _cat
+If a file ever needs ImageToPAA and it is not found, its line reads `needs-tool NAME: needs Arma 3 Tools for _SUFFIX` and the exit code is 1.
 
 ## Exit codes
 

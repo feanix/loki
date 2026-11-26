@@ -84,6 +84,7 @@ def test_every_example_command_parses(capsys):
         assert args.inputs
 
 
+@pytest.mark.usefixtures("cat_is_handed_over")
 def test_exit_codes_match_behaviour(tmp_path, capsys):
     good = png(tmp_path / "a_co.png", (64, 64))
     odd = png(tmp_path / "odd_co.png", (30, 20))

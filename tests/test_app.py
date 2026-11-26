@@ -340,10 +340,11 @@ def test_bad_png_is_a_row_not_a_crash(tmp_path, tree):
     app.close()
 
 
+@pytest.mark.usefixtures("cat_is_handed_over")
 def test_summary_counts_needs_tool_rows(tmp_path):
     from PIL import Image
 
-    big = tmp_path / "noise_cat.png"  # a noise suffix is ImageToPAA's (a PNG over 4096 is Loki's)
+    big = tmp_path / "noise_cat.png"  # stands in for a file only ImageToPAA can take (`cat_is_handed_over`)
     Image.new("RGB", (64, 64), (9, 9, 9)).save(big)
     app = make_app(tmp_path, find_tool=no_tool)
     app.set_converter(core.LOKI)

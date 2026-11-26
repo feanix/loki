@@ -73,7 +73,9 @@ def hostile_png(w: int, h: int) -> bytes:
         ("rock_smdi.png", True),
         ("rock_as.png", True),
         ("rock_sky.png", True),  # verified under the relative checks
-        ("rock_cat.png", False),
+        ("rock_cat.png", True),  # the noise suffixes are Loki's own (seeded noise)
+        ("rock_can.png", True),
+        ("rock_non.png", True),
         ("rock_foo.png", True),  # unknown suffix: the default rule, as ImageToPAA does
         ("rock_co2.png", True),
         ("rock_nohq2.png", True),
@@ -92,7 +94,7 @@ SUFFIX_TYPES = {
     "sm": 0xFF01, "smdi": 0xFF01, "dt": 0xFF01, "normalmap": 0xFF01, "no": 0xFF01, "noex": 0x1555,
     "nohq": 0xFF05, "novhq": 0xFF05, "nofhq": 0xFF05, "nof": 0xFF01, "nopx": 0xFF05, "nofex": 0x1555,
     "ns": 0xFF01, "nsex": 0x1555, "nshq": 0xFF05, "gs": 0x8080, "4444": 0x4444, "1555": 0x1555,
-    "88": 0x8080, "dxt1": 0xFF01, "dxt5": 0xFF05,
+    "88": 0x8080, "dxt1": 0xFF01, "dxt5": 0xFF05, "cat": 0xFF05, "can": 0xFF05, "non": 0xFF05,
 }
 NOISE_SUFFIXES = ["cat", "can", "non"]
 
@@ -107,20 +109,19 @@ def test_encode_every_suffix_writes_the_imagetopaa_type(tmp_path, suffix):
 
 
 @pytest.mark.parametrize("suffix", NOISE_SUFFIXES)
-def test_noise_suffixes_are_refused_and_never_routed(tmp_path, suffix):
-    png = make_png(tmp_path / f"t_{suffix}.png", 16)
-    with pytest.raises(_paa.NeedsImageToPAA, match="noise mip filter"):
-        _paa.encode(str(png), str(tmp_path / "o.paa"), None)
-    assert not (tmp_path / "o.paa").exists()
-    assert _paa.supported(f"t_{suffix}.png") is False
+def test_noise_suffixes_are_encoded_routed_and_repeatable(tmp_path, suffix):
+    """The seeded noise: the encoder takes the file, claims the name, and the same PNG gives the same bytes."""
+    png = make_png(tmp_path / f"t_{suffix}.png", 64, alpha=True)
+    _paa.encode(str(png), str(tmp_path / "o.paa"), None)
+    _paa.encode(str(png), str(tmp_path / "p.paa"), None)
+    assert (tmp_path / "o.paa").read_bytes() == (tmp_path / "p.paa").read_bytes()
+    assert _paa.supported(f"t_{suffix}.png") is True
 
 
-def test_needs_imagetopaa_is_a_value_error_with_a_short_reason(tmp_path):
+def test_needs_imagetopaa_is_a_value_error_with_a_short_reason():
+    """No suffix is refused now; the exception stays for a file the encoder may one day not take."""
     assert issubclass(_paa.NeedsImageToPAA, ValueError)
-    png = make_png(tmp_path / "a_cat.png", 32, alpha=True)  # a noise mip filter: the one refusal left
-    with pytest.raises(_paa.NeedsImageToPAA) as exc:
-        _paa.encode(str(png), str(tmp_path / "o.paa"), None)
-    assert str(exc.value) == "noise mip filter"
+    assert str(_paa.NeedsImageToPAA("a short reason")) == "a short reason"
 
 
 def test_swizzled_suffix_writes_swiz_tag(tmp_path):
@@ -171,9 +172,6 @@ def test_encode_errors_are_python_exceptions(tmp_path):
     out = str(tmp_path / "o.paa")
     with pytest.raises(OSError, match="missing_co.png"):
         _paa.encode(str(tmp_path / "missing_co.png"), out, None)
-    cat = make_png(tmp_path / "x_cat.png")
-    with pytest.raises(_paa.NeedsImageToPAA, match="noise mip filter"):
-        _paa.encode(str(cat), out, None)
     odd = make_png(tmp_path / "odd_co.png", 24)  # not a power of two
     with pytest.raises(ValueError, match="power-of-two"):
         _paa.encode(str(odd), out, None)

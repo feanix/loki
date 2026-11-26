@@ -6,8 +6,9 @@ The PAA carries no tag for it (shipped files hold only the standard tags), so "w
     {"version": 1, "entries": {"<file_key of the .paa>": {"size": <bytes>, "mtime_ns": <int>, "settings": "<key>"}}}
 
 An entry counts only while the .paa's current byte size and mtime_ns equal the recorded ones: a file replaced
-by anything else (another tool, a plain run, the user) no longer matches and is reconverted. A missing, corrupt
-or unreadable store is an empty one. Writes are atomic (temp file in the same folder, then os.replace) and
+by anything else (another tool, a plain run, the user) no longer matches and is reconverted. A missing or corrupt
+store is an empty one; for lookups so is an unreadable one, but a write never builds on an unreadable store
+(it retries, then skips the record), so held-open files never cost the other entries. Writes are atomic (temp file in the same folder, then os.replace) and
 serialised by one in-process lock plus a cross-process lock file (`outputs.json.lock`, its own file), so the
 parallel converters (--jobs, the window's pool) and several Loki processes do not lose entries. Every write
 prunes entries whose .paa is gone. The path comes from `store_path` (env LOKI_OUTPUTS overrides it, for tests).
@@ -53,14 +54,23 @@ def _sig(paa: str | Path) -> tuple[int, int] | None:
     return st.st_size, st.st_mtime_ns
 
 
-def _load(path: Path) -> dict:
-    """The entries of the store; {} when it is missing, unreadable or not what we wrote."""
+def _load(path: Path, strict: bool = False) -> dict:
+    """The entries of the store; {} when it is missing or not what we wrote (a corrupt file is a cache miss).
+
+    A file that exists but cannot be read is {} too, except with `strict`: a read-modify-write must not take
+    a held store for an empty one and drop every other entry, so it raises OSError for its caller's retry."""
     try:
         data = json.loads(path.read_text(encoding="utf8"))
         entries = data["entries"]
         if data.get("version") != VERSION or not isinstance(entries, dict):
             return {}
-    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+    except FileNotFoundError:
+        return {}
+    except OSError:
+        if strict:
+            raise
+        return {}
+    except (ValueError, KeyError, TypeError, AttributeError):
         return {}
     return {k: v for k, v in entries.items() if isinstance(v, dict)}
 
@@ -131,7 +141,7 @@ def remember(paa: str | Path, settings: str) -> None:
     while True:
         try:
             with _locked(path):
-                entries = _load(path)
+                entries = _load(path, strict=True)  # an unreadable store raises: retried below, never taken as empty
                 entries[_key(paa)] = {"size": sig[0], "mtime_ns": sig[1], "settings": settings}
                 _write(path, entries)
             return
@@ -150,7 +160,7 @@ def forget(paa: str | Path) -> None:
         return
     try:
         with _locked(path):
-            entries = _load(path)
+            entries = _load(path, strict=True)
             if entries.pop(_key(paa), None) is not None:
                 _write(path, entries)
     except OSError:

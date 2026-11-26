@@ -180,7 +180,9 @@ fn supported_follows_the_verified_rules() {
         ("rock_dt.png", true),
         ("rock_smdi.png", true),
         ("rock_sky.png", true),
-        ("rock_cat.png", false),
+        ("rock_cat.png", true),
+        ("rock_can.png", true),
+        ("rock_non.png", true),
         // Unknown suffixes get the default rule, which ImageToPAA applies too.
         ("rock_foo.png", true),
         ("rock_.png", true),
@@ -577,10 +579,8 @@ fn load_png_truncated_data_is_error() {
 // --- files end to end -------------------------------------------------------------------------
 
 #[test]
-fn encode_file_reports_unsupported_suffix_and_io() {
+fn encode_file_reports_io() {
     let dir = std::env::temp_dir();
-    let e = encode::encode_file(&dir.join("x_cat.png"), &dir.join("x.paa"), None).unwrap_err();
-    assert!(matches!(e, Error::Unsupported { .. }), "{e}");
     let e = encode::encode_file(
         &dir.join("paa-proto-missing_co.png"),
         &dir.join("x.paa"),

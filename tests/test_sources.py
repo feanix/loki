@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from conftest import track_app
+from conftest import read_when_free, track_app
 from loki import app as app_mod
 from loki import cli, core
 
@@ -395,11 +395,13 @@ def test_auto_watch_converts_a_saved_tga(tmp_path):
     os.utime(p)
     wait_for(app, lambda: p.with_suffix(".paa").exists() and app.quiet())
     assert app.rows[0].status == core.UP_TO_DATE
-    first = p.with_suffix(".paa").read_bytes()
+    paa = p.with_suffix(".paa")
+    wait_for(app, lambda: read_when_free(paa) is not None)
+    first = read_when_free(paa)
     write_tga(p, [[(1, 100, 50)] * 16] * 16)
     time.sleep(0.05)
     os.utime(p)
-    wait_for(app, lambda: p.with_suffix(".paa").read_bytes() != first and app.quiet())
+    wait_for(app, lambda: read_when_free(paa) not in (None, first) and app.quiet())
     app.close()
 
 

@@ -56,7 +56,7 @@ def test_icon_present():
 
 
 def test_version_is_one_value_everywhere():
-    assert loki.__version__ == "0.3.3"
+    assert loki.__version__ == "0.3.4"
     assert f'version = "{loki.__version__}"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
 
 
@@ -89,7 +89,7 @@ def test_converter_doc_suffix_lists_match_the_encoder():
     for s in listed:
         assert _paa.supported(f"x{s}.png"), s
     for s in ("_cat", "_can", "_non"):
-        assert not _paa.supported(f"x{s}.png"), s
+        assert s in listed and _paa.supported(f"x{s}.png"), s  # the noise suffixes are Loki's own
     assert _paa.supported("x_sky.png")  # verified against ImageToPAA, so it is in the list above
     assert _paa.supported("x_zzz.png")  # an unknown suffix gets the default rule, so it is not a fallback
     rules = (ROOT / "native" / "paa" / "src" / "rules.rs").read_text(encoding="utf-8")
@@ -112,25 +112,25 @@ def test_release_zip_name_and_members():
 
 
 def test_handover_statements_name_exactly_what_the_help_names():
-    """The hand-over list is one list: the README Known limits, docs/CONVERTER.md (twice), docs/CLI.md and the
-    --help sentence name the same suffixes (and no others), which are the ones the encoder refuses."""
+    """The hand-over list is one list: docs/CONVERTER.md (twice), docs/CLI.md and the --help sentence name the same
+    suffixes (and no others), which are the ones the encoder refuses. Today that is none: the Loki converter writes
+    every texture type, the noise suffixes included, and each statement says so. (The README line about the noise
+    suffixes is not read here.)"""
     from loki import _paa, cli
 
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
     converter = (ROOT / "docs" / "CONVERTER.md").read_text(encoding="utf-8")
     cli_doc = (ROOT / "docs" / "CLI.md").read_text(encoding="utf-8")
     want = set(re.findall(r"_[a-z]+", cli.HANDOVER_CASES))
-    assert want == {"_cat", "_can", "_non"}
-    short = next(ln for ln in readme.splitlines() if ln.startswith("- `_cat`, `_can` and `_non`"))
-    assert "ImageToPAA" in short
+    assert want == set()
     known = next(ln for ln in converter.splitlines() if ln.startswith("The Loki converter writes every texture type itself"))
     auto = next(ln for ln in converter.splitlines() if ln.startswith("- **ImageToPAA** (automatic"))
-    cmdline = next(ln for ln in cli_doc.splitlines() if ln.startswith("The built-in converter does most files."))
-    for line in (short, known, auto, cmdline):
-        named = set(re.findall(r"`(_[a-z]+)`", line))
-        assert named == want, line
-    for s in want:
-        assert not _paa.supported(f"x{s}.png")
+    cmdline = next(ln for ln in cli_doc.splitlines() if ln.startswith("The built-in converter writes every texture type itself"))
+    for line in (known, auto, cmdline):
+        assert "ImageToPAA" in line
+        assert set(re.findall(r"`(_[a-z]+)`", line)) <= {"_cat", "_can", "_non"}  # named only to say they are Loki's
+        assert "none" in line.lower() or "no suffix" in line.lower(), line
+    for s in ("_cat", "_can", "_non"):
+        assert _paa.supported(f"x{s}.png")
 
 
 def test_contributing_says_issues_only():

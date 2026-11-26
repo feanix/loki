@@ -134,15 +134,15 @@ impl Src {
 pub enum Filter {
     /// Fade every channel toward 128 as the mip gets small (detail textures).
     FadeOut,
-    /// Alpha replaced by noise (alpha test). Not replicated: ImageToPAA's noise is its own.
+    /// Alpha replaced by noise (alpha test). Loki's own seeded noise, matched to ImageToPAA's measured behaviour (`noise`).
     AlphaNoise,
-    /// Noise added to alpha. Not replicated.
+    /// Noise added to alpha. Loki's own seeded noise (`noise`).
     AddAlphaNoise,
     /// Box average of the normal vectors, renormalised; alpha box-averaged.
     NormalizeNormalMap,
     /// As `NormalizeNormalMap` with the vectors weighted by alpha.
     NormalizeNormalMapAlpha,
-    /// `NormalizeNormalMapAlpha`-style normals plus noise in alpha. Not replicated.
+    /// `NormalizeNormalMap` normals; the alpha channel is rewritten like `AlphaNoise`'s.
     NormalizeNormalMapNoise,
     /// `NormalizeNormalMap`, then the xy part fades toward the flat normal on small mips.
     NormalizeNormalMapFade,
@@ -194,15 +194,11 @@ impl Rule {
         self.swizzle.iter().any(Option::is_some)
     }
 
-    /// Why this crate cannot encode the rule, if it cannot: a mip filter whose noise comes from
-    /// ImageToPAA's own generator. Such suffixes always route to ImageToPAA.
+    /// Why this crate cannot encode the rule, if it cannot. No rule is refused now: the noise filters (`_cat`,
+    /// `_can`, `_non`) are encoded with Loki's own seeded noise (`noise`). The hook stays, so a rule the encoder
+    /// cannot take would again route to ImageToPAA and make `encode` fail with `Error::Unsupported`.
     pub fn unreplicable(&self) -> Option<&'static str> {
-        match self.mip_filter {
-            Some(Filter::AlphaNoise | Filter::AddAlphaNoise | Filter::NormalizeNormalMapNoise) => {
-                Some("needs ImageToPAA: its mipmapFilter writes noise this encoder does not reproduce")
-            }
-            _ => None,
-        }
+        None
     }
 
     /// The default pad colour (RGBA, source space, before any swizzle) for an output size that leaves
@@ -316,15 +312,16 @@ pub const RULES: &[Rule] = &[
         linear_mips: true,
         ..BASE
     },
-    // Rules without `verified: true` are not routed here: `_cat`, `_non` and `_can` use noise
-    // filters we cannot reproduce. (`_sky` failed the old absolute mip 2 floor; under the relative check
-    // of the relative check it passes.)
+    // A rule without `verified: true` is not routed here. Every class is verified now, the noise classes
+    // (`_cat`, `_can`, `_non`) with the noise-aware checks of the comparison harness.
     Rule {
         class: "ColorAlphaTest",
         pattern: "*_cat.*",
         format: Some(Dxt5),
         dyn_range: Some(1),
         mip_filter: Some(F::AlphaNoise),
+        linear_mips: true,
+        verified: true,
         ..BASE
     },
     Rule {
@@ -538,6 +535,7 @@ pub const RULES: &[Rule] = &[
         mip_filter: Some(F::NormalizeNormalMapNoise),
         dyn_range: Some(0),
         error_metrics: Some("Distance"),
+        verified: true,
         ..BASE
     },
     Rule {
@@ -655,6 +653,8 @@ pub const RULES: &[Rule] = &[
         mip_filter: Some(F::AddAlphaNoise),
         dyn_range: Some(1),
         error_metrics: Some("Distance"),
+        linear_mips: true,
+        verified: true,
         ..BASE
     },
     Rule {

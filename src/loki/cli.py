@@ -28,11 +28,11 @@ from loki.watcher import backoff_due
 DEFAULT_WAIT_LOCKED = 30.0
 RETRY_PASS = 0.5  # seconds between backoff passes (the watcher's default poll interval)
 KIND_WIDTH = 11
-# Plain-words list of what the built-in converter hands over (docs/CONVERTER.md "Known limits"); the suffix
-# names in it are checked against the encoder by tests/test_cli.py, so it cannot drift.
-HANDOVER_CASES = (
-    "_cat, _can and _non (they use Bohemia's own noise generator)"
-)
+# Plain-words list of what the built-in converter hands over to ImageToPAA (docs/CONVERTER.md "Known limits"); the
+# suffix names in it are checked against the encoder by tests/test_cli.py, so it cannot drift. Empty: the built-in
+# converter writes every texture type itself (the noise suffixes _cat, _can and _non included), and the hand-over
+# machinery (--imagetopaa, "needs Arma 3 Tools") stays for a file it ever cannot take.
+HANDOVER_CASES = ""
 
 CONVERTED, SKIPPED, FLAGGED, NEEDS_TOOL, ERROR = "converted", "skipped", "flagged", "needs-tool", "error"
 
@@ -99,8 +99,14 @@ def _build_parser() -> argparse.ArgumentParser:
         description=_wrap(
             "Loki-cli.exe converts PNG, TGA and JPG textures to Arma 3 PAA files and exits. Each PAA is written "
             "beside its source. Inputs: picture files, glob patterns (expanded by Loki), folders (their *.png, "
-            "*.tga, *.jpg, *.jpeg; add --recursive for subfolders). The built-in converter does most files. These go to Bohemia's "
-            "ImageToPAA automatically: " + HANDOVER_CASES + "."
+            "*.tga, *.jpg, *.jpeg; add --recursive for subfolders). "
+            + (
+                "The built-in converter does most files. These go to Bohemia's ImageToPAA automatically: "
+                + HANDOVER_CASES
+                + "."
+                if HANDOVER_CASES
+                else "The built-in converter writes every texture type itself; no suffix goes to Bohemia's ImageToPAA."
+            )
         ),
         epilog=EPILOG,
         formatter_class=argparse.RawDescriptionHelpFormatter,

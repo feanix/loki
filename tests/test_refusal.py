@@ -5,10 +5,10 @@ expectations below come from `_paa.supported` and from asking `_paa.encode` itse
 list written here. The suffixes are the ones Bohemia's own TexConvert.cfg names (read from the tool's folder).
 Tests that run ImageToPAA are skipped with a reason when it is not installed.
 
-The encoder refuses no alpha file: soft alpha and DXT1 1-bit alpha are encoded by Loki. The
+The encoder refuses no file now: soft alpha, DXT1 1-bit alpha and the noise suffixes are encoded by Loki. The
 per-file fallback (the encoder says no, ImageToPAA converts) is still the machinery for anything the encoder may
 refuse, so its tests drive it with a stand-in encoder that refuses files named `refused_*` the way the real one
-refuses a noise filter; separate tests pin that the real encoder takes every alpha file.
+once refused a noise filter; separate tests pin that the real encoder takes every alpha file.
 """
 
 import re
@@ -236,7 +236,7 @@ def test_every_cfg_suffix_with_the_tool_absent(tmp_path, suffix_set):
                 else:
                     assert row.status_text.startswith("needs Arma 3 Tools")
             seen.add((made is not None, text is not None))
-        assert {(True, False), (False, True)} <= seen  # both outcomes occurred in the set
+        assert seen == {(True, False)}  # the encoder takes every suffix of the cfg: nothing is handed over
         # no alpha file is refused any more; the soft-alpha files of the set were all converted by Loki
         assert not any("soft alpha" in r.status_text or "1-bit alpha" in r.status_text for r in rows.values())
         assert any(r.made_by == core.LOKI for p, r in rows.items() if p.parent.name == "soft")
@@ -257,6 +257,6 @@ def test_every_cfg_suffix_with_the_tool_present(tmp_path, suffix_set):
             row = rows[p]
             assert row.status == core.UP_TO_DATE, (p.name, row.status_text)
             assert row.made_by == (made or core.BOHEMIA), (p.name, row.made_by)
-        assert {r.made_by for r in rows.values()} == {core.LOKI, core.BOHEMIA}
+        assert {r.made_by for r in rows.values()} == {core.LOKI}  # the tool is there and nothing needs it
     finally:
         app.close()

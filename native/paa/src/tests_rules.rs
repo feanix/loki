@@ -171,30 +171,16 @@ fn structure_equals_imagetopaa_for_every_suffix() {
     assert!(bad.is_empty(), "{}", bad.join("\n"));
 }
 
-#[test]
-fn unreplicable_rules_refuse_to_encode_and_never_route() {
-    let names: Vec<&str> = RULES
-        .iter()
-        .filter(|r| r.unreplicable().is_some())
-        .map(|r| r.suffix())
-        .collect();
-    assert_eq!(names, ["cat", "non", "can"]);
-    for s in names {
-        let e = encode::encode(probe_image(0, 16), rule(s)).unwrap_err();
-        assert!(e.to_string().contains(&format!("_{s}")), "{e}");
-        assert!(!crate::supported(&format!("x_{s}.png")));
-    }
-}
-
-/// Suffixes that still go to ImageToPAA because their output could not be matched: the noise filters are not
-/// replicated (`sky` joined the verified ones in, it passes the relative mip 2 check of).
-const ROUTED_TO_IMAGETOPAA: [&str; 3] = ["cat", "can", "non"];
+/// Suffixes that still go to ImageToPAA because Loki cannot write them: none. The noise filters (`_cat`, `_can`,
+/// `_non`) are encoded with Loki's own seeded noise, checked against ImageToPAA by statistics (`noise`).
+const ROUTED_TO_IMAGETOPAA: [&str; 0] = [];
 
 #[test]
-fn every_suffix_is_verified_except_the_ones_routed_to_imagetopaa() {
+fn every_suffix_is_verified_and_routed_to_loki() {
     for r in RULES {
         let routed = ROUTED_TO_IMAGETOPAA.contains(&r.suffix());
         assert_eq!(r.verified, !routed, "{}", r.class);
+        assert!(r.unreplicable().is_none(), "{}", r.class);
         assert_eq!(
             crate::supported(&format!("x_{}.png", r.suffix())),
             !routed,
@@ -203,6 +189,10 @@ fn every_suffix_is_verified_except_the_ones_routed_to_imagetopaa() {
         );
     }
     assert!(rules::PLAIN.verified);
+    for s in ["cat", "can", "non"] {
+        let bytes = encode::encode(probe_image(1, 16), rule(s)).unwrap();
+        assert!(crate::paa::read(&bytes).is_ok(), "_{s}");
+    }
 }
 
 #[test]
@@ -618,7 +608,7 @@ fn linear_mips_average_in_linear_light() {
         .filter(|r| r.linear_mips)
         .map(|r| r.suffix())
         .collect();
-    assert_eq!(on, ["8888", "co", "ca", "gs"]);
+    assert_eq!(on, ["8888", "co", "ca", "cat", "gs", "can"]);
 }
 
 #[test]
@@ -695,12 +685,16 @@ fn rule_flags_are_consistent() {
             "{}",
             r.class
         );
-        // Rules whose mip filter is a noise filter are exactly the unreplicable ones.
+        // The noise filters are encoded (`noise`): no rule is unreplicable, and each is verified.
         let noise = matches!(
             r.mip_filter,
             Some(Filter::AlphaNoise | Filter::AddAlphaNoise | Filter::NormalizeNormalMapNoise)
         );
-        assert_eq!(noise, r.unreplicable().is_some(), "{}", r.class);
+        assert!(
+            r.unreplicable().is_none() && (!noise || r.verified),
+            "{}",
+            r.class
+        );
     }
 }
 
@@ -721,7 +715,7 @@ fn chain_box_truncates_r_and_g_and_rounds_b_and_a() {
 // alpha AVGC exactly and encodes the 1-bit mask with its own deterministic threshold, and a hand-over is allowed
 // a hand-over only when Loki cannot produce a valid file. So every class of the oracle table, at every alpha
 // kind (opaque, soft ramp, 0/255), encodes here, and ImageToPAA's own FLAG and type words come out equal
-// (`structure_equals_imagetopaa_for_every_suffix`); a refusal is left only for the noise filters.
+// (`structure_equals_imagetopaa_for_every_suffix`); no class is refused.
 #[test]
 fn every_class_encodes_every_alpha_kind_without_a_hand_over() {
     let mut bad = Vec::new();
@@ -744,8 +738,7 @@ fn every_class_encodes_every_alpha_kind_without_a_hand_over() {
     assert!(bad.is_empty(), "{}", bad.join("\n"));
 }
 
-// `Rule::linear_mips` and `dynRange` say the same thing on every verified row (the two rows that
-// differ, `ColorAlphaTest` and `AddAlphaNoise`, are not verified).
+// `Rule::linear_mips` and `dynRange` say the same thing on every verified row.
 #[test]
 fn linear_mips_is_dyn_range_not_zero_on_every_verified_row() {
     for r in RULES.iter().filter(|r| r.verified).chain([&rules::PLAIN]) {

@@ -29,7 +29,7 @@ create_exception!(
     _paa,
     NeedsImageToPAA,
     PyValueError,
-    "The encoder refuses this file (message = short reason, e.g. 'noise mip filter'): ImageToPAA must convert it."
+    "The encoder refuses this file (message = short reason): ImageToPAA must convert it. No suffix is refused now; the exception stays for a file the encoder cannot take."
 );
 
 create_exception!(

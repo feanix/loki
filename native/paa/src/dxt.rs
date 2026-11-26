@@ -3,7 +3,9 @@
 //! Written from the public block layout (SPEC section 6, Wikipedia S3TC), not
 //! from any other encoder. Colour fit: principal axis of the 16 texels gives
 //! the first endpoint guess, then a few rounds of least-squares endpoint
-//! refinement on the chosen indices, keeping only improvements. Alpha block:
+//! refinement on the chosen indices, keeping only improvements, then a +-1 step search on the
+//! quantised 5/6-bit endpoint components (rounding the real-valued fit alone left
+//! smooth gradients 6 dB worse than ImageToPAA, with visible bands). Alpha block:
 //! same idea on one channel, trying both the 8-level and the 6-level+0/255
 //! modes. Solid-colour blocks use a lookup of the best 5/6-bit endpoint pair
 //! so flat UI colours are not smeared by quantisation.
@@ -80,6 +82,18 @@ fn dist2(a: &Rgb, b: &Rgb) -> i32 {
 /// Best palette index per texel (only the first `n` palette entries) and total error.
 /// Texels flagged transparent (mode3 only) take index 3 at no cost.
 fn assign(px: &[Rgb; 16], opaque: &[bool; 16], pal: &[Rgb; 4], n: usize) -> ([u8; 16], i64) {
+    assign_below(px, opaque, pal, n, i64::MAX).expect("no limit")
+}
+
+/// Like `assign`, but gives up (`None`) as soon as the running error reaches `limit`: the local
+/// search only wants candidates that beat the best so far, and most do not.
+fn assign_below(
+    px: &[Rgb; 16],
+    opaque: &[bool; 16],
+    pal: &[Rgb; 4],
+    n: usize,
+    limit: i64,
+) -> Option<([u8; 16], i64)> {
     let mut idx = [3u8; 16];
     let mut err = 0i64;
     for i in 0..16 {
@@ -96,8 +110,11 @@ fn assign(px: &[Rgb; 16], opaque: &[bool; 16], pal: &[Rgb; 4], n: usize) -> ([u8
         }
         idx[i] = bi;
         err += best as i64;
+        if err >= limit {
+            return None;
+        }
     }
-    (idx, err)
+    Some((idx, err))
 }
 
 /// Pack sixteen 2-bit indices, texel 0 in the low bits.
@@ -378,8 +395,59 @@ fn refine_endpoints(
             break;
         }
     }
+    // Local search on the quantised endpoints. The least-squares solution is real-valued, and
+    // rounding it to 5/6 bits can land a whole step away from the best pair; on a smooth gradient
+    // that error repeats block after block and shows as bands. Step each of the six endpoint
+    // components by +-1, keep any step that lowers the error, repeat until none does (bounded).
+    let split = |c: u16| -> [i32; 3] {
+        [
+            ((c >> 11) & 31) as i32,
+            ((c >> 5) & 63) as i32,
+            (c & 31) as i32,
+        ]
+    };
+    let join = |v: [i32; 3]| -> u16 { ((v[0] as u16) << 11) | ((v[1] as u16) << 5) | v[2] as u16 };
+    let maxv = [31, 63, 31];
+    for _ in 0..LOCAL_SEARCH_ROUNDS {
+        // A block already this far off (rms about 9 levels) is texture or noise: one endpoint
+        // step changes it little, and the search is the encoder's main cost on such content.
+        if best_err == 0 || best_err > LOCAL_SEARCH_MAX_ERR {
+            break;
+        }
+        let before = best_err;
+        for which in 0..2 {
+            for ch in 0..3 {
+                for d in [-1i32, 1] {
+                    let mut v = [split(c0), split(c1)];
+                    let nv = v[which][ch] + d;
+                    if nv < 0 || nv > maxv[ch] {
+                        continue;
+                    }
+                    v[which][ch] = nv;
+                    let (n0, n1) = order(join(v[0]), join(v[1]));
+                    // c0 == c1 reads as 3-colour mode: skip (the solid-colour path covers it).
+                    if n0 == n1 && !mode3 {
+                        continue;
+                    }
+                    let pal = palette(n0, n1, mode3);
+                    if let Some((idx, err)) = assign_below(px, opaque, &pal, n, best_err) {
+                        (c0, c1, best_idx, best_err) = (n0, n1, idx, err);
+                    }
+                }
+            }
+        }
+        if best_err >= before {
+            break;
+        }
+    }
     (c0, c1, pack_idx(&best_idx))
 }
+
+/// Blocks whose squared error after the least-squares fit exceeds this skip the local search.
+const LOCAL_SEARCH_MAX_ERR: i64 = 4096;
+
+/// Upper bound on passes of the endpoint local search in `refine_endpoints`.
+const LOCAL_SEARCH_ROUNDS: usize = 2;
 
 /// The 8 alpha levels of a DXT5 alpha block. `a0 > a1`: 8 interpolated levels; otherwise 6
 /// interpolated levels plus fixed 0 and 255.

@@ -288,6 +288,7 @@ def test_a_size_paa_has_exactly_the_tags_of_a_plain_one_on_the_loki_route(tmp_pa
         assert res.ok and tags(res.paa) == plain, size
 
 
+@pytest.mark.usefixtures("cat_is_handed_over")
 def test_a_size_paa_has_exactly_the_tags_of_a_plain_one_on_the_handover_route(tmp_path, monkeypatch):
     def tool(exe, src, dst):
         Path(dst).write_bytes(paa_bytes(512, 256))
@@ -367,6 +368,7 @@ def test_normals_are_unit_length_after_resizing(tmp_path):
 # --- the ImageToPAA hand-over -------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("cat_is_handed_over")
 def test_handover_gets_the_sized_8bit_copy_and_the_settings_are_recorded(tmp_path, monkeypatch):
     seen = {}
 
@@ -388,6 +390,7 @@ def test_handover_gets_the_sized_8bit_copy_and_the_settings_are_recorded(tmp_pat
         assert im.size == (300, 200) and im.mode == "L"  # the source PNG is untouched
 
 
+@pytest.mark.usefixtures("cat_is_handed_over")
 def test_handover_without_a_size_is_as_before(tmp_path, monkeypatch):
     got = []
 
